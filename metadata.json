@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Copy ofreal test",
+  "description": "Professional CV Generator for International Recruitment.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
