@@ -1,9 +1,11 @@
 
 import React, { useState, useMemo } from 'react';
 import { BaseFormData, TemplateField } from '../../types';
-import { FormInput, FormSection, PhotoUpload, Header, BackButton, FormRadio, FormCheckbox } from '../ui/FormComponents';
-import { ImageIcon, Sparkles, Languages, User, ChevronRight, ListChecks, Building, Plus, History, Contact, CheckCircle2, PlusCircle, Loader2 } from 'lucide-react';
+import { FormInput, FormSection, PhotoUpload, Header, BackButton, FormRadio, FormCheckbox, FormSelect } from '../ui/FormComponents';
+// Added FilePlus to the imports to resolve the error on line 420
+import { ImageIcon, Sparkles, Languages, User, ChevronRight, ListChecks, Building, Plus, History, Contact, CheckCircle2, PlusCircle, Loader2, FilePlus } from 'lucide-react';
 import { generateTemplatePDF } from '../../utils/pdfGenerator';
+import { processPassportImage, MRZData } from '../../utils/mrzHelper';
 import { useAuth } from '../../context/AuthContext';
 
 interface Props {
@@ -13,13 +15,15 @@ interface Props {
 const AllForm: React.FC<Props> = ({ onBack }) => {
   const { user, trackGeneration, templates } = useAuth();
   
-  // Per-office overrides state
   const [officeOverrides, setOfficeOverrides] = useState<Record<string, { refNo: string, monthlySalary: string }>>({});
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
 
   const [formData, setFormData] = useState<BaseFormData>({
     photos: { face: null, full: null, passport: null },
     currentDate: new Date().toISOString().split('T')[0],
+    religion: 'MUSLIM',
+    maritalStatus: 'SINGLE',
     langEnglishPoor: false,
     langEnglishFair: false,
     langEnglishFluent: true,
@@ -33,13 +37,34 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     setFormData(prev => ({ ...prev, [key]: formattedValue }));
   };
 
-  const handlePhotoUpdate = (type: 'face' | 'full' | 'passport', f: File | string) => {
+  const handlePhotoUpdate = async (type: 'face' | 'full' | 'passport', f: File | string) => {
     if (typeof f === 'string') {
       handleInputChange('photos', { ...formData.photos, [type]: f });
-    } else {
-      const r = new FileReader();
-      r.onload = (e) => handleInputChange('photos', { ...formData.photos, [type]: e.target?.result });
-      r.readAsDataURL(f);
+      return;
+    }
+
+    const r = new FileReader();
+    r.onload = (e) => handleInputChange('photos', { ...formData.photos, [type]: e.target?.result });
+    r.readAsDataURL(f);
+
+    if (type === 'passport') {
+      setIsScanning(true);
+      try {
+        const data: MRZData = await processPassportImage(f);
+        setFormData(prev => ({ 
+          ...prev, 
+          fullName: data.fullName, 
+          passportNumber: data.passportNumber, 
+          dob: data.dob, 
+          expiryDate: data.expiryDate, 
+          placeOfIssue: data.placeOfIssue || 'ADDIS ABABA', 
+          pob: data.pob 
+        }));
+      } catch (e: any) { 
+        alert("Passport Scan Failed: " + e.message); 
+      } finally { 
+        setIsScanning(false); 
+      }
     }
   };
 
@@ -84,15 +109,36 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
   };
 
   const hasField = (key: string) => templates.some(t => t.fields.some(f => f.key === key));
-  const hasAnyField = (keys: string[]) => keys.some(key => hasField(key));
+  const hasFieldAcrossTemplates = (key: string) => templates.some(t => t.fields.some(f => f.key === key));
+
+  const hasAnyField = (keys: string[]) => keys.some(key => hasFieldAcrossTemplates(key));
+
+  // Logic to find fields that are in templates but NOT handled by standard sections
+  const handledKeys = [
+    'currentDate', 'positionApplied', 'refNo', 'monthlySalary', 'photoFace', 'photoFull', 'photoPassport',
+    'fullName', 'religion', 'dob', 'pob', 'maritalStatus', 'children', 'education', 'height', 'weight', 'age',
+    'passportNumber', 'issueDate', 'expiryDate', 'placeOfIssue', 'contactName', 'contactAddress', 'contactRelation', 'contactPhone',
+    'langEnglish', 'langArabic', 'langEnglishPoor', 'langEnglishFair', 'langEnglishFluent', 'langArabicPoor', 'langArabicFair', 'langArabicFluent',
+    'hasExperience', 'skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing'
+  ];
   
-  const getCustomLabel = (key: string) => {
-    for (const t of templates) {
-      const f = t.fields.find(field => field.key === key);
-      if (f?.customLabel) return f.customLabel;
-    }
-    return null;
-  };
+  // Also exclude the numbered experience fields
+  for(let i=1; i<=4; i++) {
+    handledKeys.push(`expCountry${i}`, `expPeriod${i}`, `expPosition${i}`);
+  }
+
+  const supplementalFields = useMemo(() => {
+    const allTemplateFields = templates.flatMap(t => t.fields);
+    const uniqueFieldsMap = new Map<string, TemplateField>();
+    
+    allTemplateFields.forEach(f => {
+      if (!handledKeys.includes(f.key) && !uniqueFieldsMap.has(f.key)) {
+        uniqueFieldsMap.set(f.key, f);
+      }
+    });
+    
+    return Array.from(uniqueFieldsMap.values());
+  }, [templates]);
 
   const requiredExpRecords = useMemo(() => {
     let max = 0;
@@ -141,13 +187,14 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
             <Sparkles size={64} className="mx-auto mb-6 text-slate-800" />
             <h3 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">No Active Layouts</h3>
             <p className="text-slate-500 mb-12 max-w-xs mx-auto text-sm">Design templates in Studio to enable batch export.</p>
+            <button onClick={() => (window as any).onNavigate('settings')} className="px-10 py-4 bg-pixel text-white font-black rounded-2xl hover:bg-pixelDark transition-all shadow-pixel uppercase text-xs tracking-widest">Open Builder Console</button>
         </div>
       ) : (
         <div className="space-y-12">
           
           <FormSection title="Core Batch Data" icon={<ListChecks size={14} />} accentColor="pixel">
              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {hasField('currentDate') && (
+                {hasFieldAcrossTemplates('currentDate') && (
                   <FormInput 
                     label="Generation Date" 
                     type="date" 
@@ -155,7 +202,7 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
                     onChange={e => handleInputChange('currentDate', e.target.value)} 
                   />
                 )}
-                {hasField('positionApplied') && (
+                {hasFieldAcrossTemplates('positionApplied') && (
                   <FormInput 
                     label="Position Applied For" 
                     value={formData.positionApplied || ''} 
@@ -225,25 +272,49 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           {hasAnyField(['photoFace', 'photoFull', 'photoPassport']) && (
             <FormSection title="Shared Assets" icon={<ImageIcon size={14} />} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                  {hasField('photoFace') && <PhotoUpload label="FACE PHOTO" type="face" preview={formData.photos.face} onUpload={f => handlePhotoUpdate('face', f)} onRemove={() => handleInputChange('photos', {...formData.photos, face: null})} colorClass="pixel" />}
-                  {hasField('photoFull') && <PhotoUpload label="FULL BODY" type="full" preview={formData.photos.full} onUpload={f => handlePhotoUpdate('full', f)} onRemove={() => handleInputChange('photos', {...formData.photos, full: null})} colorClass="pixel" />}
-                  {hasField('photoPassport') && <PhotoUpload label="PASSPORT" type="pass" preview={formData.photos.passport} onUpload={f => handlePhotoUpdate('passport', f)} onRemove={() => handleInputChange('photos', {...formData.photos, passport: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoFace') && <PhotoUpload label="FACE PHOTO" type="face" preview={formData.photos.face} onUpload={f => handlePhotoUpdate('face', f)} onRemove={() => handleInputChange('photos', {...formData.photos, face: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoFull') && <PhotoUpload label="FULL BODY" type="full" preview={formData.photos.full} onUpload={f => handlePhotoUpdate('full', f)} onRemove={() => handleInputChange('photos', {...formData.photos, full: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoPassport') && <PhotoUpload label="PASSPORT PHOTO" type="pass" preview={formData.photos.passport} onUpload={f => handlePhotoUpdate('passport', f)} onRemove={() => handleInputChange('photos', {...formData.photos, passport: null})} colorClass="pixel" isScanning={isScanning} />}
               </div>
             </FormSection>
           )}
 
-          {hasAnyField(['fullName', 'religion', 'dob', 'pob', 'maritalStatus', 'education', 'height', 'weight']) && (
+          {hasAnyField(['fullName', 'religion', 'dob', 'pob', 'maritalStatus', 'education', 'height', 'weight', 'children', 'age']) && (
             <FormSection title="Candidate Core Data" icon={<User size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {hasField('fullName') && <FormInput label="Full Name" value={formData.fullName || ''} onChange={e => handleInputChange('fullName', e.target.value)} />}
-                  {hasField('religion') && <FormInput label="Religion" value={formData.religion || ''} onChange={e => handleInputChange('religion', e.target.value)} placeholder="MUSLIM" />}
-                  {hasField('dob') && <FormInput label="Date of Birth" type="date" value={formData.dob || ''} onChange={e => handleInputChange('dob', e.target.value)} />}
-                  {hasField('pob') && <FormInput label="Place of Birth" value={formData.pob || ''} onChange={e => handleInputChange('pob', e.target.value)} placeholder="ADDIS ABABA" />}
-                  {hasField('maritalStatus') && <FormInput label="Marital Status" value={formData.maritalStatus || ''} onChange={e => handleInputChange('maritalStatus', e.target.value)} placeholder="SINGLE" />}
-                  {hasField('education') && <FormInput label="Education" value={formData.education || ''} onChange={e => handleInputChange('education', e.target.value)} />}
-                  {hasField('height') && <FormInput label="Height" value={formData.height || ''} onChange={e => handleInputChange('height', e.target.value)} placeholder="1.65 M" />}
-                  {hasField('weight') && <FormInput label="Weight" value={formData.weight || ''} onChange={e => handleInputChange('weight', e.target.value)} placeholder="58 KG" />}
-                  {hasField('age') && <FormInput label="Age" value={formData.age || ''} onChange={e => handleInputChange('age', e.target.value)} placeholder="24" />}
+                  {hasFieldAcrossTemplates('fullName') && <FormInput label="Full Name" value={formData.fullName || ''} onChange={e => handleInputChange('fullName', e.target.value)} />}
+                  {hasFieldAcrossTemplates('religion') && (
+                    <FormSelect 
+                      label="Religion" 
+                      value={formData.religion || ''} 
+                      onChange={e => handleInputChange('religion', e.target.value)} 
+                      options={[
+                        { value: 'MUSLIM', label: 'MUSLIM' },
+                        { value: 'CHRISTIAN', label: 'CHRISTIAN' },
+                        { value: 'OTHER', label: 'OTHER' }
+                      ]} 
+                    />
+                  )}
+                  {hasFieldAcrossTemplates('dob') && <FormInput label="Date of Birth" type="date" value={formData.dob || ''} onChange={e => handleInputChange('dob', e.target.value)} />}
+                  {hasFieldAcrossTemplates('pob') && <FormInput label="Place of Birth" value={formData.pob || ''} onChange={e => handleInputChange('pob', e.target.value)} placeholder="ADDIS ABABA" />}
+                  {hasFieldAcrossTemplates('maritalStatus') && (
+                    <FormSelect 
+                      label="Marital Status" 
+                      value={formData.maritalStatus || ''} 
+                      onChange={e => handleInputChange('maritalStatus', e.target.value)} 
+                      options={[
+                        { value: 'SINGLE', label: 'SINGLE' },
+                        { value: 'MARRIED', label: 'MARRIED' },
+                        { value: 'DIVORCED', label: 'DIVORCED' },
+                        { value: 'WIDOWED', label: 'WIDOWED' }
+                      ]} 
+                    />
+                  )}
+                  {hasFieldAcrossTemplates('children') && <FormInput label="No. of Children" value={formData.children || ''} onChange={e => handleInputChange('children', e.target.value)} placeholder="0" />}
+                  {hasFieldAcrossTemplates('education') && <FormInput label="Education" value={formData.education || ''} onChange={e => handleInputChange('education', e.target.value)} />}
+                  {hasFieldAcrossTemplates('height') && <FormInput label="Height" value={formData.height || ''} onChange={e => handleInputChange('height', e.target.value)} placeholder="1.65 M" />}
+                  {hasFieldAcrossTemplates('weight') && <FormInput label="Weight" value={formData.weight || ''} onChange={e => handleInputChange('weight', e.target.value)} placeholder="58 KG" />}
+                  {hasFieldAcrossTemplates('age') && <FormInput label="Age" value={formData.age || ''} onChange={e => handleInputChange('age', e.target.value)} placeholder="24" />}
               </div>
             </FormSection>
           )}
@@ -251,10 +322,10 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           {hasAnyField(['passportNumber', 'issueDate', 'expiryDate', 'placeOfIssue']) && (
             <FormSection title="Passport Details" icon={<Contact size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {hasField('passportNumber') && <FormInput label="Passport Number" value={formData.passportNumber || ''} onChange={e => handleInputChange('passportNumber', e.target.value)} />}
-                {hasField('issueDate') && <FormInput label="Issue Date" type="date" value={formData.issueDate || ''} onChange={e => handleInputChange('issueDate', e.target.value)} />}
-                {hasField('expiryDate') && <FormInput label="Expiry Date" type="date" value={formData.expiryDate || ''} onChange={e => handleInputChange('expiryDate', e.target.value)} />}
-                {hasField('placeOfIssue') && <FormInput label="Place of Issue" value={formData.placeOfIssue || ''} onChange={e => handleInputChange('placeOfIssue', e.target.value)} />}
+                {hasFieldAcrossTemplates('passportNumber') && <FormInput label="Passport Number" value={formData.passportNumber || ''} onChange={e => handleInputChange('passportNumber', e.target.value)} />}
+                {hasFieldAcrossTemplates('issueDate') && <FormInput label="Issue Date" type="date" value={formData.issueDate || ''} onChange={e => handleInputChange('issueDate', e.target.value)} />}
+                {hasFieldAcrossTemplates('expiryDate') && <FormInput label="Expiry Date" type="date" value={formData.expiryDate || ''} onChange={e => handleInputChange('expiryDate', e.target.value)} />}
+                {hasFieldAcrossTemplates('placeOfIssue') && <FormInput label="Place of Issue" value={formData.placeOfIssue || ''} onChange={e => handleInputChange('placeOfIssue', e.target.value)} />}
               </div>
             </FormSection>
           )}
@@ -262,10 +333,10 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           {hasAnyField(['contactName', 'contactAddress', 'contactRelation', 'contactPhone']) && (
             <FormSection title="Emergency Contact" icon={<Contact size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {hasField('contactName') && <FormInput label="Contact Name" value={formData.contactName || ''} onChange={e => handleInputChange('contactName', e.target.value)} />}
-                {hasField('contactAddress') && <FormInput label="Address" value={formData.contactAddress || ''} onChange={e => handleInputChange('contactAddress', e.target.value)} />}
-                {hasField('contactRelation') && <FormInput label="Relationship" value={formData.contactRelation || ''} onChange={e => handleInputChange('contactRelation', e.target.value)} />}
-                {hasField('contactPhone') && <FormInput label="Contact Phone" value={formData.contactPhone || ''} onChange={e => handleInputChange('contactPhone', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactName') && <FormInput label="Contact Name" value={formData.contactName || ''} onChange={e => handleInputChange('contactName', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactAddress') && <FormInput label="Address" value={formData.contactAddress || ''} onChange={e => handleInputChange('contactAddress', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactRelation') && <FormInput label="Relationship" value={formData.contactRelation || ''} onChange={e => handleInputChange('contactRelation', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactPhone') && <FormInput label="Contact Phone" value={formData.contactPhone || ''} onChange={e => handleInputChange('contactPhone', e.target.value)} />}
               </div>
             </FormSection>
           )}
@@ -274,8 +345,8 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
             <FormSection title="Language Matrix" icon={<Languages size={14}/>} accentColor="pixel">
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {hasField('langEnglish') && <FormInput label="English Level (Text)" value={formData.langEnglish || ''} onChange={e => handleInputChange('langEnglish', e.target.value)} />}
-                  {hasField('langArabic') && <FormInput label="Arabic Level (Text)" value={formData.langArabic || ''} onChange={e => handleInputChange('langArabic', e.target.value)} />}
+                  {hasFieldAcrossTemplates('langEnglish') && <FormInput label="English Level (Text)" value={formData.langEnglish || ''} onChange={e => handleInputChange('langEnglish', e.target.value)} />}
+                  {hasFieldAcrossTemplates('langArabic') && <FormInput label="Arabic Level (Text)" value={formData.langArabic || ''} onChange={e => handleInputChange('langArabic', e.target.value)} />}
                 </div>
                 <div className="space-y-4">
                   <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
@@ -337,13 +408,39 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           {hasAnyField(['skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing']) && (
             <FormSection title="Competency Profile" icon={<CheckCircle2 size={14}/>} accentColor="pixel">
                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {hasField('skillWashing') && <FormCheckbox id="skillWashing" label="Washing" checked={!!formData.skillWashing} onChange={e => handleInputChange('skillWashing', e.target.checked)} />}
-                  {hasField('skillCooking') && <FormCheckbox id="skillCooking" label="Cooking" checked={!!formData.skillCooking} onChange={e => handleInputChange('skillCooking', e.target.checked)} />}
-                  {hasField('skillBabyCare') && <FormCheckbox id="skillBabyCare" label="Baby Care" checked={!!formData.skillBabyCare} onChange={e => handleInputChange('skillBabyCare', e.target.checked)} />}
-                  {hasField('skillCleaning') && <FormCheckbox id="skillCleaning" label="Cleaning" checked={!!formData.skillCleaning} onChange={e => handleInputChange('skillCleaning', e.target.checked)} />}
-                  {hasField('skillIroning') && <FormCheckbox id="skillIroning" label="Ironing" checked={!!formData.skillIroning} onChange={e => handleInputChange('skillIroning', e.target.checked)} />}
-                  {hasField('skillSewing') && <FormCheckbox id="skillSewing" label="Sewing" checked={!!formData.skillSewing} onChange={e => handleInputChange('skillSewing', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillWashing') && <FormCheckbox id="skillWashing" label="Washing" checked={!!formData.skillWashing} onChange={e => handleInputChange('skillWashing', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillCooking') && <FormCheckbox id="skillCooking" label="Cooking" checked={!!formData.skillCooking} onChange={e => handleInputChange('skillCooking', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillBabyCare') && <FormCheckbox id="skillBabyCare" label="Baby Care" checked={!!formData.skillBabyCare} onChange={e => handleInputChange('skillBabyCare', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillCleaning') && <FormCheckbox id="skillCleaning" label="Cleaning" checked={!!formData.skillCleaning} onChange={e => handleInputChange('skillCleaning', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillIroning') && <FormCheckbox id="skillIroning" label="Ironing" checked={!!formData.skillIroning} onChange={e => handleInputChange('skillIroning', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillSewing') && <FormCheckbox id="skillSewing" label="Sewing" checked={!!formData.skillSewing} onChange={e => handleInputChange('skillSewing', e.target.checked)} />}
                </div>
+            </FormSection>
+          )}
+
+          {/* SUPPLEMENTAL DATA: This fixes the "ignored fields" bug by rendering any template fields not covered above */}
+          {supplementalFields.length > 0 && (
+            <FormSection title="Supplemental Information" icon={<FilePlus size={14}/>} accentColor="pixel">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {supplementalFields.map(f => (
+                  f.type === 'checkmark' || f.type === 'boolean' ? (
+                    <FormCheckbox 
+                      key={f.key} 
+                      id={f.key} 
+                      label={f.label} 
+                      checked={!!formData[f.key]} 
+                      onChange={e => handleInputChange(f.key, e.target.checked)} 
+                    />
+                  ) : (
+                    <FormInput 
+                      key={f.key} 
+                      label={f.label} 
+                      value={formData[f.key] || ''} 
+                      onChange={e => handleInputChange(f.key, e.target.value)} 
+                    />
+                  )
+                ))}
+              </div>
             </FormSection>
           )}
 
