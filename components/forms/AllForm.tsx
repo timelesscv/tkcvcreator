@@ -1,8 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { BaseFormData, TemplateField } from '../../types';
 import { FormInput, FormSection, PhotoUpload, Header, BackButton, FormRadio, FormCheckbox, FormSelect } from '../ui/FormComponents';
-// Added FilePlus to the imports to resolve the error on line 420
 import { ImageIcon, Sparkles, Languages, User, ChevronRight, ListChecks, Building, Plus, History, Contact, CheckCircle2, PlusCircle, Loader2, FilePlus } from 'lucide-react';
 import { generateTemplatePDF } from '../../utils/pdfGenerator';
 import { processPassportImage, MRZData } from '../../utils/mrzHelper';
@@ -24,13 +23,57 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     currentDate: new Date().toISOString().split('T')[0],
     religion: 'MUSLIM',
     maritalStatus: 'SINGLE',
+    hasExperience: false,
     langEnglishPoor: false,
     langEnglishFair: false,
     langEnglishFluent: true,
     langArabicPoor: false,
     langArabicFair: true,
     langArabicFluent: false,
+    contactRelation: 'FATHER'
   });
+
+  // Auto Calculations & Intelligent Defaults
+  useEffect(() => {
+    setFormData(prev => {
+      const updates: any = {};
+      
+      // 1. Age Calculation
+      if (prev.dob) {
+        const birthDate = new Date(prev.dob);
+        if (!isNaN(birthDate.getTime())) {
+          const today = new Date();
+          let calculatedAge = today.getFullYear() - birthDate.getFullYear();
+          const m = today.getMonth() - birthDate.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            calculatedAge--;
+          }
+          if (calculatedAge >= 0 && calculatedAge < 100 && prev.age !== calculatedAge.toString()) {
+            updates.age = calculatedAge.toString();
+          }
+        }
+      }
+
+      // 2. Emergency Contact Address Sync
+      if (prev.pob && !prev.contactAddress) {
+        updates.contactAddress = prev.pob;
+      }
+
+      // 3. Previous Employment Defaults
+      if (prev.hasExperience) {
+        for (let i = 1; i <= 4; i++) {
+          if (!prev[`expPosition${i}`]) {
+            updates[`expPosition${i}`] = 'HOUSEMAID';
+          }
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        return { ...prev, ...updates };
+      }
+      return prev;
+    });
+  }, [formData.dob, formData.pob, formData.hasExperience]);
 
   const handleInputChange = (key: string, value: any) => {
     const formattedValue = typeof value === 'string' ? value.toUpperCase() : value;
@@ -51,6 +94,11 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
       setIsScanning(true);
       try {
         const data: MRZData = await processPassportImage(f);
+        
+        // TRICK: Extract Father/Grandfather name from Full Name (remove first name)
+        const nameParts = data.fullName.split(' ');
+        const extractedContactName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : data.fullName;
+
         setFormData(prev => ({ 
           ...prev, 
           fullName: data.fullName, 
@@ -58,7 +106,10 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           dob: data.dob, 
           expiryDate: data.expiryDate, 
           placeOfIssue: data.placeOfIssue || 'ADDIS ABABA', 
-          pob: data.pob 
+          pob: data.pob,
+          contactName: extractedContactName,
+          contactAddress: data.pob,
+          contactRelation: 'FATHER'
         }));
       } catch (e: any) { 
         alert("Passport Scan Failed: " + e.message); 
@@ -108,12 +159,9 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     }));
   };
 
-  const hasField = (key: string) => templates.some(t => t.fields.some(f => f.key === key));
   const hasFieldAcrossTemplates = (key: string) => templates.some(t => t.fields.some(f => f.key === key));
-
   const hasAnyField = (keys: string[]) => keys.some(key => hasFieldAcrossTemplates(key));
 
-  // Logic to find fields that are in templates but NOT handled by standard sections
   const handledKeys = [
     'currentDate', 'positionApplied', 'refNo', 'monthlySalary', 'photoFace', 'photoFull', 'photoPassport',
     'fullName', 'religion', 'dob', 'pob', 'maritalStatus', 'children', 'education', 'height', 'weight', 'age',
@@ -122,7 +170,6 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     'hasExperience', 'skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing'
   ];
   
-  // Also exclude the numbered experience fields
   for(let i=1; i<=4; i++) {
     handledKeys.push(`expCountry${i}`, `expPeriod${i}`, `expPosition${i}`);
   }
@@ -130,13 +177,11 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
   const supplementalFields = useMemo(() => {
     const allTemplateFields = templates.flatMap(t => t.fields);
     const uniqueFieldsMap = new Map<string, TemplateField>();
-    
     allTemplateFields.forEach(f => {
       if (!handledKeys.includes(f.key) && !uniqueFieldsMap.has(f.key)) {
         uniqueFieldsMap.set(f.key, f);
       }
     });
-    
     return Array.from(uniqueFieldsMap.values());
   }, [templates]);
 
@@ -156,7 +201,6 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
 
   const generateAll = async () => {
     if (templates.length === 0) return;
-    
     setIsGenerating(true);
     try {
       for (const template of templates) {
@@ -272,9 +316,9 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           {hasAnyField(['photoFace', 'photoFull', 'photoPassport']) && (
             <FormSection title="Shared Assets" icon={<ImageIcon size={14} />} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                  {hasFieldAcrossTemplates('photoFace') && <PhotoUpload label="FACE PHOTO" type="face" preview={formData.photos.face} onUpload={f => handlePhotoUpdate('face', f)} onRemove={() => handleInputChange('photos', {...formData.photos, face: null})} colorClass="pixel" />}
-                  {hasFieldAcrossTemplates('photoFull') && <PhotoUpload label="FULL BODY" type="full" preview={formData.photos.full} onUpload={f => handlePhotoUpdate('full', f)} onRemove={() => handleInputChange('photos', {...formData.photos, full: null})} colorClass="pixel" />}
-                  {hasFieldAcrossTemplates('photoPassport') && <PhotoUpload label="PASSPORT PHOTO" type="pass" preview={formData.photos.passport} onUpload={f => handlePhotoUpdate('passport', f)} onRemove={() => handleInputChange('photos', {...formData.photos, passport: null})} colorClass="pixel" isScanning={isScanning} />}
+                  {hasFieldAcrossTemplates('photoFace') && <PhotoUpload label="FACE PHOTO" type="face" preview={formData.photos.face} onUpload={c => handlePhotoUpdate('face', c)} onRemove={() => handleInputChange('photos', {...formData.photos, face: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoFull') && <PhotoUpload label="FULL BODY" type="full" preview={formData.photos.full} onUpload={c => handlePhotoUpdate('full', c)} onRemove={() => handleInputChange('photos', {...formData.photos, full: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoPassport') && <PhotoUpload label="PASSPORT PHOTO" type="pass" preview={formData.photos.passport} onUpload={c => handlePhotoUpdate('passport', c)} onRemove={() => handleInputChange('photos', {...formData.photos, passport: null})} colorClass="pixel" isScanning={isScanning} />}
               </div>
             </FormSection>
           )}
@@ -418,7 +462,6 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
             </FormSection>
           )}
 
-          {/* SUPPLEMENTAL DATA: This fixes the "ignored fields" bug by rendering any template fields not covered above */}
           {supplementalFields.length > 0 && (
             <FormSection title="Supplemental Information" icon={<FilePlus size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
