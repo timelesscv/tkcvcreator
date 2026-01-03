@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { BaseFormData } from '../../types';
+import { BaseFormData, TemplateField } from '../../types';
 import { FormInput, FormCheckbox, FormSection, PhotoUpload, Header, BackButton, FormSelect, FormRadio } from '../ui/FormComponents';
 import { ImageIcon, Sparkles, FileText, ChevronRight, Building, User, Briefcase, Languages, History, Contact, PlusCircle, CheckCircle2 } from 'lucide-react';
 import { generateTemplatePDF } from '../../utils/pdfGenerator';
@@ -14,43 +14,67 @@ interface Props {
 }
 
 export default function DynamicCountryForm({ country, flag, onBack }: Props) {
-  // Fix: Removed activeApiKey from useAuth hook as utilities use process.env.API_KEY directly.
   const { user, trackGeneration, templates } = useAuth();
   const countryTemplates = templates.filter(t => t.country === country);
   
   const [isScanning, setIsScanning] = useState(false);
-  const [formData, setFormData] = useState<BaseFormData>(() => {
-    const initial: BaseFormData = {
-      photos: { face: null, full: null, passport: null },
-      officeName: '',
-      hasExperience: false,
-      religion: 'MUSLIM',
-      maritalStatus: 'SINGLE',
-      currentDate: new Date().toISOString().split('T')[0],
-      langEnglishPoor: false,
-      langEnglishFair: false,
-      langEnglishFluent: false,
-      langArabicPoor: false,
-      langArabicFair: false,
-      langArabicFluent: false,
-    };
-    return initial;
-  });
+  const [formData, setFormData] = useState<BaseFormData>(() => ({
+    photos: { face: null, full: null, passport: null },
+    officeName: '',
+    hasExperience: false,
+    religion: 'MUSLIM',
+    maritalStatus: 'SINGLE',
+    currentDate: new Date().toISOString().split('T')[0],
+    langEnglishPoor: false,
+    langEnglishFair: false,
+    langEnglishFluent: true,
+    langArabicPoor: false,
+    langArabicFair: true,
+    langArabicFluent: false,
+    contactRelation: 'FATHER'
+  }));
 
+  // Auto Calculations & Intelligent Defaults
   useEffect(() => {
-    if (formData.dob) {
-      const birthDate = new Date(formData.dob);
-      const today = new Date();
-      let age = today.getFullYear() - birthDate.getFullYear();
-      const m = today.getMonth() - birthDate.getMonth();
-      if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-        age--;
+    setFormData(prev => {
+      const updates: any = {};
+      
+      // 1. Age Calculation
+      if (prev.dob) {
+        const birthDate = new Date(prev.dob);
+        if (!isNaN(birthDate.getTime())) {
+          const today = new Date();
+          let calculatedAge = today.getFullYear() - birthDate.getFullYear();
+          const m = today.getMonth() - birthDate.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            calculatedAge--;
+          }
+          if (calculatedAge >= 0 && calculatedAge < 100 && prev.age !== calculatedAge.toString()) {
+            updates.age = calculatedAge.toString();
+          }
+        }
       }
-      if (age > 0 && age < 100) {
-        setFormData(prev => ({ ...prev, age: age.toString() }));
+
+      // 2. Emergency Contact Address Sync
+      if (prev.pob && !prev.contactAddress) {
+        updates.contactAddress = prev.pob;
       }
-    }
-  }, [formData.dob]);
+
+      // 3. Previous Employment Defaults
+      if (prev.hasExperience) {
+        for (let i = 1; i <= 4; i++) {
+          if (!prev[`expPosition${i}`]) {
+            updates[`expPosition${i}`] = 'HOUSEMAID';
+          }
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        return { ...prev, ...updates };
+      }
+      return prev;
+    });
+  }, [formData.dob, formData.pob, formData.hasExperience]);
 
   const handleInputChange = (key: string, value: any) => {
     const formattedValue = typeof value === 'string' ? value.toUpperCase() : value;
@@ -69,27 +93,23 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
 
   const handlePhotoUpload = async (type: 'face' | 'full' | 'passport', file: File | string) => {
     if (typeof file === 'string') {
-      setFormData(prev => ({
-        ...prev,
-        photos: { ...prev.photos, [type]: file }
-      }));
+      setFormData(prev => ({ ...prev, photos: { ...prev.photos, [type]: file } }));
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
-      setFormData(prev => ({
-        ...prev,
-        photos: { ...prev.photos, [type]: e.target?.result as string }
-      }));
-    };
+    reader.onload = (e) => setFormData(prev => ({ ...prev, photos: { ...prev.photos, [type]: e.target?.result as string } }));
     reader.readAsDataURL(file);
 
     if (type === 'passport') {
       setIsScanning(true);
       try {
-        // Fix: Removed unnecessary activeApiKey argument to match processPassportImage signature.
         const data: MRZData = await processPassportImage(file);
+        
+        // TRICK: Extract Father/Grandfather name from Full Name (remove first name)
+        const nameParts = data.fullName.split(' ');
+        const extractedContactName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : data.fullName;
+
         setFormData(prev => ({
           ...prev,
           fullName: data.fullName,
@@ -97,7 +117,10 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
           dob: data.dob,
           expiryDate: data.expiryDate,
           placeOfIssue: data.placeOfIssue || 'ADDIS ABABA',
-          pob: data.pob
+          pob: data.pob,
+          contactName: extractedContactName,
+          contactAddress: data.pob,
+          contactRelation: 'FATHER'
         }));
       } catch (e: any) {
         alert("Scan Failed: " + e.message);
@@ -107,9 +130,8 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     }
   };
 
-  const hasField = (key: string) => {
-    return countryTemplates.some(t => t.fields.some(f => f.key === key));
-  };
+  const hasField = (key: string) => countryTemplates.some(t => t.fields.some(f => f.key === key));
+  const hasAnyField = (keys: string[]) => keys.some(key => hasField(key));
 
   const getCustomLabel = (key: string) => {
     for (const t of countryTemplates) {
@@ -119,7 +141,27 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     return null;
   };
 
-  const hasAnyField = (keys: string[]) => keys.some(key => hasField(key));
+  const handledKeys = [
+    'currentDate', 'positionApplied', 'refNo', 'monthlySalary', 'photoFace', 'photoFull', 'photoPassport',
+    'fullName', 'religion', 'dob', 'pob', 'maritalStatus', 'children', 'education', 'height', 'weight', 'age',
+    'passportNumber', 'issueDate', 'expiryDate', 'placeOfIssue', 'contactName', 'contactAddress', 'contactRelation', 'contactPhone',
+    'langEnglish', 'langArabic', 'langEnglishPoor', 'langEnglishFair', 'langEnglishFluent', 'langArabicPoor', 'langArabicFair', 'langArabicFluent',
+    'hasExperience', 'skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing', 'officeName'
+  ];
+  for(let i=1; i<=4; i++) {
+    handledKeys.push(`expCountry${i}`, `expPeriod${i}`, `expPosition${i}`);
+  }
+
+  const supplementalFields = useMemo(() => {
+    const allTemplateFields = countryTemplates.flatMap(t => t.fields);
+    const uniqueFieldsMap = new Map<string, TemplateField>();
+    allTemplateFields.forEach(f => {
+      if (!handledKeys.includes(f.key) && !uniqueFieldsMap.has(f.key)) {
+        uniqueFieldsMap.set(f.key, f);
+      }
+    });
+    return Array.from(uniqueFieldsMap.values());
+  }, [countryTemplates]);
 
   const requiredExpRecords = useMemo(() => {
     let max = 0;
@@ -134,6 +176,13 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     });
     return max;
   }, [countryTemplates]);
+
+  const progress = useMemo(() => {
+    const coreKeys = ['fullName', 'passportNumber', 'dob', 'pob'];
+    const filledCore = coreKeys.filter(k => !!formData[k]).length;
+    const filledPhotos = Object.values(formData.photos).filter(p => !!p).length;
+    return Math.round(((filledCore + filledPhotos) / (coreKeys.length + 3)) * 100);
+  }, [formData]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 pb-32 animate-fade-in relative bg-primary">
@@ -177,7 +226,7 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
                 {hasField('fullName') && <FormInput label="Full Name" value={formData.fullName || ''} onChange={e => handleInputChange('fullName', e.target.value)} />}
                 {hasField('religion') && <FormSelect label="Religion" value={formData.religion} onChange={e => handleInputChange('religion', e.target.value)} options={[{value:'MUSLIM',label:'MUSLIM'},{value:'CHRISTIAN',label:'CHRISTIAN'},{value:'OTHER',label:'OTHER'}]} />}
                 {hasField('dob') && <FormInput label="Date of Birth" type="date" value={formData.dob || ''} onChange={e => handleInputChange('dob', e.target.value)} />}
-                {hasField('age') && <FormInput label="Age (Auto-Calculated)" value={formData.age || ''} readOnly className="opacity-60 bg-black/20" />}
+                {hasField('age') && <FormInput label="Age" value={formData.age || ''} readOnly className="opacity-60 bg-black/20" />}
                 {hasField('pob') && <FormInput label="Place of Birth" value={formData.pob || ''} onChange={e => handleInputChange('pob', e.target.value)} placeholder="ADDIS ABABA" />}
                 {hasField('maritalStatus') && <FormSelect label="Marital Status" value={formData.maritalStatus} onChange={e => handleInputChange('maritalStatus', e.target.value)} options={[{value:'SINGLE',label:'SINGLE'},{value:'MARRIED',label:'MARRIED'},{value:'DIVORCED',label:'DIVORCED'},{value:'WIDOWED',label:'WIDOWED'}]} />}
                 {hasField('children') && <FormInput label="No. of Children" type="number" value={formData.children || ''} onChange={e => handleInputChange('children', e.target.value)} />}
@@ -198,7 +247,18 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
             </FormSection>
           )}
 
-          {hasAnyField(['langEnglishPoor', 'langEnglishFair', 'langEnglishFluent', 'langArabicPoor', 'langArabicFair', 'langArabicFluent']) && (
+          {hasAnyField(['contactName', 'contactAddress', 'contactRelation', 'contactPhone']) && (
+            <FormSection title="Emergency Contact" icon={<Contact size={14}/>} accentColor="pixel">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {hasField('contactName') && <FormInput label="Contact Name" value={formData.contactName || ''} onChange={e => handleInputChange('contactName', e.target.value)} />}
+                {hasField('contactAddress') && <FormInput label="Address" value={formData.contactAddress || ''} onChange={e => handleInputChange('contactAddress', e.target.value)} />}
+                {hasField('contactRelation') && <FormInput label="Relationship" value={formData.contactRelation || ''} onChange={e => handleInputChange('contactRelation', e.target.value)} />}
+                {hasField('contactPhone') && <FormInput label="Contact Phone" value={formData.contactPhone || ''} onChange={e => handleInputChange('contactPhone', e.target.value)} />}
+              </div>
+            </FormSection>
+          )}
+
+          {hasAnyField(['langEnglishPoor', 'langEnglishFair', 'langEnglishFluent', 'langArabicPoor', 'langArabicFair', 'langArabicFluent', 'langEnglish', 'langArabic']) && (
             <FormSection title="Language Proficiency" icon={<Languages size={14}/>} accentColor="pixel">
               <div className="space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
@@ -259,7 +319,7 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
             </FormSection>
           )}
 
-          {hasAnyField(['customField1', 'customField2', 'customField3', 'customField4', 'customField5', 'customField6', 'customField7', 'customField8', 'customField9', 'customField10']) && (
+          {(supplementalFields.length > 0 || hasAnyField(['customField1', 'customField2', 'customField3', 'customField4', 'customField5', 'customField6', 'customField7', 'customField8', 'customField9', 'customField10'])) && (
             <FormSection title="Additional Information" icon={<PlusCircle size={14}/>} accentColor="pixel">
                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(idx => {
@@ -275,6 +335,13 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
                     />
                   );
                 })}
+                {supplementalFields.map(f => (
+                  f.type === 'checkmark' || f.type === 'boolean' ? (
+                    <FormCheckbox key={f.key} id={f.key} label={f.label} checked={!!formData[f.key]} onChange={e => handleInputChange(f.key, e.target.checked)} />
+                  ) : (
+                    <FormInput key={f.key} label={f.label} value={formData[f.key] || ''} onChange={e => handleInputChange(f.key, e.target.value)} />
+                  )
+                ))}
                </div>
             </FormSection>
           )}
