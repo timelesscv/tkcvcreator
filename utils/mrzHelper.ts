@@ -23,7 +23,38 @@ export interface MRZData {
 export async function getActiveGeminiApiKeys(): Promise<string[]> {
   const keys: string[] = [];
 
-  // 1. Query Supabase api_vault table
+  const addKey = (raw?: string | null) => {
+    const k = raw?.trim();
+    if (k && k !== '""' && k !== "''" && !keys.includes(k)) {
+      keys.push(k);
+    }
+  };
+
+  // 1. Check all standard environment variables (Vite / Vercel / Node)
+  try {
+    const metaEnv = (import.meta as any)?.env;
+    if (metaEnv) {
+      addKey(metaEnv.VITE_GEMINI_API_KEY);
+      addKey(metaEnv.VITE_API_KEY);
+      addKey(metaEnv.GEMINI_API_KEY);
+      addKey(metaEnv.API_KEY);
+    }
+  } catch {}
+
+  try {
+    addKey(process.env.VITE_GEMINI_API_KEY);
+    addKey(process.env.GEMINI_API_KEY);
+    addKey(process.env.API_KEY);
+  } catch {}
+
+  try {
+    addKey((window as any).process?.env?.GEMINI_API_KEY);
+    addKey((window as any).process?.env?.API_KEY);
+    addKey((globalThis as any).process?.env?.GEMINI_API_KEY);
+    addKey((globalThis as any).process?.env?.API_KEY);
+  } catch {}
+
+  // 2. Query Supabase api_vault table (active keys)
   try {
     const { data: vaultData, error: vaultError } = await supabase
       .from('api_vault')
@@ -31,16 +62,13 @@ export async function getActiveGeminiApiKeys(): Promise<string[]> {
       .eq('is_active', true);
 
     if (!vaultError && vaultData && vaultData.length > 0) {
-      vaultData.forEach((row: any) => {
-        const k = row.key_value?.trim();
-        if (k && !keys.includes(k)) keys.push(k);
-      });
+      vaultData.forEach((row: any) => addKey(row.key_value));
     }
   } catch (err) {
     console.warn("[API Engine] Notice while querying api_vault table:", err);
   }
 
-  // 2. Query Supabase profiles table for personal_api_key
+  // 3. Query Supabase profiles table for personal_api_key
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user?.id) {
@@ -50,8 +78,7 @@ export async function getActiveGeminiApiKeys(): Promise<string[]> {
         .eq('id', session.user.id)
         .maybeSingle();
 
-      const pk = profile?.personal_api_key?.trim();
-      if (pk && !keys.includes(pk)) keys.push(pk);
+      addKey(profile?.personal_api_key);
     }
 
     const { data: anyProfiles } = await supabase
@@ -61,36 +88,23 @@ export async function getActiveGeminiApiKeys(): Promise<string[]> {
       .limit(10);
 
     if (anyProfiles) {
-      anyProfiles.forEach((p: any) => {
-        const pk = p.personal_api_key?.trim();
-        if (pk && !keys.includes(pk)) keys.push(pk);
-      });
+      anyProfiles.forEach((p: any) => addKey(p.personal_api_key));
     }
   } catch (err) {
     console.warn("[API Engine] Notice while querying profiles table:", err);
   }
 
-  // 3. Check localStorage vault fallback
+  // 4. Check localStorage vault fallback
   try {
+    addKey(localStorage.getItem('pixel_active_key'));
     const localVault = localStorage.getItem('pixel_api_vault');
     if (localVault) {
       const parsed = JSON.parse(localVault);
       if (Array.isArray(parsed)) {
-        parsed.filter((k: any) => k.is_active).forEach((k: any) => {
-          const val = k.key_value?.trim();
-          if (val && !keys.includes(val)) keys.push(val);
-        });
+        parsed.filter((k: any) => k.is_active).forEach((k: any) => addKey(k.key_value));
       }
     }
-    const cachedActive = localStorage.getItem('pixel_active_key')?.trim();
-    if (cachedActive && !keys.includes(cachedActive)) keys.push(cachedActive);
   } catch {}
-
-  // 4. Runtime environment
-  const envKey = (window as any).process?.env?.API_KEY || (globalThis as any).process?.env?.API_KEY || process.env.API_KEY || '';
-  if (envKey.trim() && !keys.includes(envKey.trim())) {
-    keys.push(envKey.trim());
-  }
 
   return keys;
 }
