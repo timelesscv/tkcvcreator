@@ -4,7 +4,7 @@ import { BaseFormData, TemplateField } from '../../types';
 import { FormInput, FormSection, PhotoUpload, Header, BackButton, FormRadio, FormCheckbox, FormSelect } from '../ui/FormComponents';
 import { ImageIcon, Sparkles, Languages, User, ChevronRight, ListChecks, Building, Plus, History, Contact, CheckCircle2, PlusCircle, Loader2, FilePlus } from 'lucide-react';
 import { generateTemplatePDF } from '../../utils/pdfGenerator';
-import { processPassportImage, MRZData } from '../../utils/mrzHelper';
+import { processPassportImage, MRZData, calculateEthiopianIssueDate } from '../../utils/mrzHelper';
 import { useAuth } from '../../context/AuthContext';
 
 interface Props {
@@ -23,6 +23,7 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     currentDate: new Date().toISOString().split('T')[0],
     religion: 'MUSLIM',
     maritalStatus: 'SINGLE',
+    placeOfIssue: 'ADDIS ABABA',
     hasExperience: false,
     langEnglishPoor: false,
     langEnglishFair: false,
@@ -38,6 +39,10 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     setFormData(prev => {
       const updates: any = {};
       
+      if (!prev.placeOfIssue) {
+        updates.placeOfIssue = 'ADDIS ABABA';
+      }
+
       // 1. Age Calculation
       if (prev.dob) {
         const birthDate = new Date(prev.dob);
@@ -77,7 +82,16 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
 
   const handleInputChange = (key: string, value: any) => {
     const formattedValue = typeof value === 'string' ? value.toUpperCase() : value;
-    setFormData(prev => ({ ...prev, [key]: formattedValue }));
+    setFormData(prev => {
+      const next = { ...prev, [key]: formattedValue };
+      if (key === 'expiryDate' && typeof value === 'string') {
+        const autoIssueDate = calculateEthiopianIssueDate(value);
+        if (autoIssueDate) {
+          next.issueDate = autoIssueDate;
+        }
+      }
+      return next;
+    });
   };
 
   const handlePhotoUpdate = async (type: 'face' | 'full' | 'passport', f: File | string) => {
@@ -99,20 +113,23 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
         const nameParts = data.fullName.split(' ');
         const extractedContactName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : data.fullName;
 
+        const calculatedIssue = data.issueDate || calculateEthiopianIssueDate(data.expiryDate);
+
         setFormData(prev => ({ 
           ...prev, 
           fullName: data.fullName, 
           passportNumber: data.passportNumber, 
           dob: data.dob, 
           expiryDate: data.expiryDate, 
-          placeOfIssue: data.placeOfIssue || 'ADDIS ABABA', 
+          issueDate: calculatedIssue || prev.issueDate || '',
+          placeOfIssue: 'ADDIS ABABA', 
           pob: data.pob,
           contactName: extractedContactName,
           contactAddress: data.pob,
           contactRelation: 'FATHER'
         }));
       } catch (e: any) { 
-        alert("Passport Scan Failed: " + e.message); 
+        alert("Passport Scan Failed: " + (e?.message || e)); 
       } finally { 
         setIsScanning(false); 
       }
@@ -178,8 +195,15 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
     const allTemplateFields = templates.flatMap(t => t.fields);
     const uniqueFieldsMap = new Map<string, TemplateField>();
     allTemplateFields.forEach(f => {
-      if (!handledKeys.includes(f.key) && !uniqueFieldsMap.has(f.key)) {
-        uniqueFieldsMap.set(f.key, f);
+      if (!handledKeys.includes(f.key)) {
+        if (!uniqueFieldsMap.has(f.key)) {
+          uniqueFieldsMap.set(f.key, f);
+        } else {
+          const existing = uniqueFieldsMap.get(f.key)!;
+          if (!existing.customLabel && f.customLabel) {
+            uniqueFieldsMap.set(f.key, { ...existing, customLabel: f.customLabel });
+          }
+        }
       }
     });
     return Array.from(uniqueFieldsMap.values());
@@ -369,7 +393,7 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
                 {hasFieldAcrossTemplates('passportNumber') && <FormInput label="Passport Number" value={formData.passportNumber || ''} onChange={e => handleInputChange('passportNumber', e.target.value)} />}
                 {hasFieldAcrossTemplates('issueDate') && <FormInput label="Issue Date" type="date" value={formData.issueDate || ''} onChange={e => handleInputChange('issueDate', e.target.value)} />}
                 {hasFieldAcrossTemplates('expiryDate') && <FormInput label="Expiry Date" type="date" value={formData.expiryDate || ''} onChange={e => handleInputChange('expiryDate', e.target.value)} />}
-                {hasFieldAcrossTemplates('placeOfIssue') && <FormInput label="Place of Issue" value={formData.placeOfIssue || ''} onChange={e => handleInputChange('placeOfIssue', e.target.value)} />}
+                {hasFieldAcrossTemplates('placeOfIssue') && <FormInput label="Place of Issue" value={formData.placeOfIssue || 'ADDIS ABABA'} onChange={e => handleInputChange('placeOfIssue', e.target.value)} placeholder="ADDIS ABABA" />}
               </div>
             </FormSection>
           )}
@@ -465,24 +489,25 @@ const AllForm: React.FC<Props> = ({ onBack }) => {
           {supplementalFields.length > 0 && (
             <FormSection title="Supplemental Information" icon={<FilePlus size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {supplementalFields.map(f => (
-                  f.type === 'checkmark' || f.type === 'boolean' ? (
+                {supplementalFields.map(f => {
+                  const labelToDisplay = f.customLabel || f.label;
+                  return f.type === 'checkmark' || f.type === 'boolean' ? (
                     <FormCheckbox 
                       key={f.key} 
                       id={f.key} 
-                      label={f.label} 
+                      label={labelToDisplay} 
                       checked={!!formData[f.key]} 
                       onChange={e => handleInputChange(f.key, e.target.checked)} 
                     />
                   ) : (
                     <FormInput 
                       key={f.key} 
-                      label={f.label} 
+                      label={labelToDisplay} 
                       value={formData[f.key] || ''} 
                       onChange={e => handleInputChange(f.key, e.target.value)} 
                     />
-                  )
-                ))}
+                  );
+                })}
               </div>
             </FormSection>
           )}

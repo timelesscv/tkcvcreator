@@ -50,6 +50,47 @@ const getBase64FromUrl = async (url: string): Promise<string> => {
   });
 };
 
+const drawCheckmark = (doc: jsPDF, cx: number, cy: number, boxWidth: number, boxHeight: number, colorRgb: [number, number, number], fontSize?: number) => {
+  doc.saveGraphicsState();
+  doc.setDrawColor(colorRgb[0], colorRgb[1], colorRgb[2]);
+
+  // If fontSize is provided, scale checkmark proportionally with the chosen font size
+  let size: number;
+  if (fontSize && fontSize > 0) {
+    const desiredSize = fontSize * 0.35; // 1 pt = 0.3528 mm
+    size = Math.max(1.2, Math.min(desiredSize, Math.min(boxWidth, boxHeight) * 0.85));
+  } else {
+    size = Math.max(2.0, Math.min(boxWidth, boxHeight) * 0.75);
+  }
+
+  const strokeW = Math.max(0.18, Math.min(size * 0.16, 0.85));
+  doc.setLineWidth(strokeW);
+  doc.setLineCap('round');
+  doc.setLineJoin('round');
+  
+  // Clean checkmark coordinates centered at (cx, cy)
+  const p1x = cx - size * 0.35;
+  const p1y = cy + size * 0.05;
+  const p2x = cx - size * 0.05;
+  const p2y = cy + size * 0.35;
+  const p3x = cx + size * 0.40;
+  const p3y = cy - size * 0.35;
+  
+  doc.line(p1x, p1y, p2x, p2y);
+  doc.line(p2x, p2y, p3x, p3y);
+  doc.restoreGraphicsState();
+};
+
+const isTruthyCheckbox = (v: any): boolean => {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v > 0;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    return s === 'true' || s === 'yes' || s === '1' || s === 'on' || s === '✓' || s === 'x' || s === 'checked';
+  }
+  return false;
+};
+
 export const generateTemplatePDF = async (data: any, template: CustomTemplate, agencyName: string = "PIXEL"): Promise<void> => {
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
   registerFonts(doc);
@@ -80,9 +121,7 @@ export const generateTemplatePDF = async (data: any, template: CustomTemplate, a
       else if (field.key === 'photoFace') val = data.photos?.face;
       else if (field.key === 'photoFull') val = data.photos?.full;
       else if (field.key === 'photoPassport') val = data.photos?.passport;
-      
-      if (field.type === 'boolean') val = val ? "YES" : "";
-      if (!val && val !== 0 && field.type !== 'boolean' && field.type !== 'checkmark') continue;
+      else if (field.key === 'placeOfIssue') val = data.placeOfIssue || 'ADDIS ABABA';
 
       const xl = (field.x / 100) * PAGE_WIDTH;
       const yt = (field.y / 100) * PAGE_HEIGHT;
@@ -101,6 +140,41 @@ export const generateTemplatePDF = async (data: any, template: CustomTemplate, a
       }
 
       const rgb = hexToRgb(field.color || '#000000');
+
+      // Checkbox rendering: clean checkmark scaled to field.fontSize
+      if (field.type === 'checkmark') {
+        if (!isTruthyCheckbox(val)) {
+          // Left blank when unchecked
+          continue;
+        }
+        const cx = xl + (width / 2);
+        const cy = yt + (height / 2);
+        drawCheckmark(doc, cx, cy, width, height, rgb, field.fontSize);
+        continue;
+      }
+
+      // Boolean rendering (Output Mode: YES/NO): format as text "YES" or "NO"
+      if (field.type === 'boolean') {
+        if (isTruthyCheckbox(val)) {
+          val = 'YES';
+        } else if (val === false || val === 'false' || val === '0' || val === 'no' || val === 'NO') {
+          val = 'NO';
+        } else {
+          // Unchecked boolean field left blank
+          continue;
+        }
+      }
+
+      // If an untyped text field was given a boolean value, format as checkmark or skip
+      if (typeof val === 'boolean' || val === 'true' || val === 'false') {
+        if (!isTruthyCheckbox(val)) {
+          continue;
+        }
+        val = 'YES';
+      }
+
+      if (!val && val !== 0) continue;
+
       doc.setTextColor(rgb[0], rgb[1], rgb[2]);
       
       let style = 'normal';
@@ -110,14 +184,6 @@ export const generateTemplatePDF = async (data: any, template: CustomTemplate, a
       
       let font = getMappedFont(field.fontFamily);
       let text = String(val).trim();
-
-      if (field.type === 'checkmark') {
-        if (val) {
-          font = 'zapfdingbats';
-          text = '4'; 
-          style = 'normal';
-        } else continue;
-      }
 
       doc.setFont(font, style);
       

@@ -4,7 +4,7 @@ import { CustomTemplate, TemplateField, FieldType, FieldCategory } from '../../t
 import { 
   ChevronLeft, Save, Trash2, Type, MousePointer2, Bold, Italic, 
   AlignLeft, AlignCenter, AlignRight, Search, CheckSquare, 
-  ImageIcon, Building, Files, FilePlus, Grid, CaseSensitive,
+  ImageIcon, Building, Files, FilePlus, Grid, CaseSensitive, PlusCircle,
   LayoutDashboard, AlignStartVertical, AlignEndVertical, AlignCenterVertical,
   AlignStartHorizontal, AlignEndHorizontal, AlignCenterHorizontal
 } from 'lucide-react';
@@ -116,23 +116,34 @@ const FIELD_GROUPS = [
       { key: 'contactRelation', label: 'Relationship', type: 'text', category: 'contact' },
       { key: 'contactPhone', label: 'Contact Phone', type: 'text', category: 'contact' }
     ]
-  },
-  {
-    title: '9. Custom Fields',
-    fields: [
-      { key: 'customField1', label: 'Custom 1', type: 'text', category: 'custom' },
-      { key: 'customField2', label: 'Custom 2', type: 'text', category: 'custom' },
-      { key: 'customField3', label: 'Custom 3', type: 'text', category: 'custom' },
-      { key: 'customField4', label: 'Custom 4', type: 'text', category: 'custom' },
-      { key: 'customField5', label: 'Custom 5', type: 'text', category: 'custom' },
-      { key: 'customField6', label: 'Custom 6', type: 'text', category: 'custom' },
-      { key: 'customField7', label: 'Custom 7', type: 'text', category: 'custom' },
-      { key: 'customField8', label: 'Custom 8', type: 'text', category: 'custom' },
-      { key: 'customField9', label: 'Custom 9', type: 'text', category: 'custom' },
-      { key: 'customField10', label: 'Custom 10', type: 'text', category: 'custom' },
-    ]
   }
 ];
+
+export interface CustomFieldDef {
+  key: string;
+  label: string;
+  type: FieldType;
+  category: FieldCategory;
+}
+
+const DEFAULT_CUSTOM_FIELDS: CustomFieldDef[] = [
+  { key: 'laborId', label: 'Labor ID', type: 'text', category: 'custom' },
+  { key: 'oromifa', label: 'Oromifa', type: 'boolean', category: 'custom' },
+  { key: 'amharic', label: 'Amharic', type: 'boolean', category: 'custom' },
+  { key: 'visaNo', label: 'Visa Number', type: 'text', category: 'custom' },
+  { key: 'contractNo', label: 'Musaned Contract No', type: 'text', category: 'custom' },
+  { key: 'nationalId', label: 'National ID', type: 'text', category: 'custom' },
+  { key: 'customField1', label: 'Custom 1', type: 'text', category: 'custom' },
+  { key: 'customField2', label: 'Custom 2', type: 'text', category: 'custom' },
+];
+
+export const deduplicateFields = (fieldList: TemplateField[]): TemplateField[] => {
+  const map = new Map<string, TemplateField>();
+  fieldList.forEach(f => {
+    map.set(f.key, f);
+  });
+  return Array.from(map.values());
+};
 
 export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemplate }) => {
   const [pages, setPages] = useState<string[]>(initialTemplate?.pages || []);
@@ -141,10 +152,29 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
   const [name, setName] = useState(initialTemplate?.name || 'New Layout');
   const [officeName, setOfficeName] = useState(initialTemplate?.officeName || '');
   const [country, setCountry] = useState(initialTemplate?.country || 'kuwait');
-  const [fields, setFields] = useState<TemplateField[]>(initialTemplate?.fields || []);
+  const [fields, setFields] = useState<TemplateField[]>(() => deduplicateFields(initialTemplate?.fields || []));
   const [selectedFieldIds, setSelectedFieldIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [snapToGrid, setSnapToGrid] = useState(false);
+
+  // Dynamic Custom Fields State
+  const [customFields, setCustomFields] = useState<CustomFieldDef[]>(() => {
+    const fromTemplate = (initialTemplate?.fields || [])
+      .filter(f => f.category === 'custom')
+      .map(f => ({
+        key: f.key,
+        label: f.customLabel || f.label,
+        type: f.type,
+        category: 'custom' as FieldCategory
+      }));
+    const merged = [...DEFAULT_CUSTOM_FIELDS, ...fromTemplate];
+    const map = new Map<string, CustomFieldDef>();
+    merged.forEach(c => map.set(c.key, c));
+    return Array.from(map.values());
+  });
+  const [showAddCustomModal, setShowAddCustomModal] = useState(false);
+  const [newCustomName, setNewCustomName] = useState('');
+  const [newCustomType, setNewCustomType] = useState<FieldType>('text');
   
   const [interactionMode, setInteractionMode] = useState<'none' | 'dragging' | 'resizing' | 'marquee'>('none');
   const [resizeDir, setResizeDir] = useState<ResizeDir>(null);
@@ -167,22 +197,83 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
     }
   };
 
-  const addField = (template: any) => {
-    if (pages.length === 0) return alert("Please upload a CV page background first.");
-    const newField: TemplateField = {
-      id: crypto.randomUUID(),
-      key: template.key,
-      label: template.label,
-      x: 10, y: 10, width: template.type === 'checkmark' ? 4 : 40, height: template.type === 'checkmark' ? 4 : 6,
-      page: currentPageIndex + 1,
-      type: template.type as FieldType,
-      category: template.category as FieldCategory,
-      fontSize: 12, fontFamily: 'Helvetica', color: '#000000',
-      bold: false, italic: false, align: 'left',
-      dateFormat: 'alpha'
+  const handleCreateCustomField = (labelToCreate?: string, typeToCreate?: FieldType) => {
+    const rawLabel = (labelToCreate || newCustomName).trim();
+    if (!rawLabel) return;
+    const finalType = typeToCreate || newCustomType;
+    const cleanKey = 'custom_' + rawLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const newDef: CustomFieldDef = {
+      key: cleanKey,
+      label: rawLabel.toUpperCase(),
+      type: finalType,
+      category: 'custom'
     };
-    setFields([...fields, newField]);
-    setSelectedFieldIds([newField.id]);
+
+    setCustomFields(prev => {
+      const filtered = prev.filter(c => c.key !== newDef.key);
+      return [...filtered, newDef];
+    });
+
+    setNewCustomName('');
+    setShowAddCustomModal(false);
+    // Automatically add it to the canvas
+    addField(newDef);
+  };
+
+  const addField = (template: any) => {
+    if (pages.length === 0) {
+      alert("Please upload a CV page background first.");
+      return;
+    }
+
+    const defaultWidth = (template.type === 'checkmark' || template.type === 'boolean') ? 5 : 40;
+    const defaultHeight = (template.type === 'checkmark' || template.type === 'boolean') ? 5 : 6;
+
+    setFields(prev => {
+      const existingIndex = prev.findIndex(f => f.key === template.key);
+      if (existingIndex >= 0) {
+        // Enforce strict de-duplication: update coordinates and page rather than creating duplicate
+        const updated = [...prev];
+        const existing = updated[existingIndex];
+        const updatedField: TemplateField = {
+          ...existing,
+          page: currentPageIndex + 1,
+          x: 10,
+          y: 10,
+          width: existing.width || defaultWidth,
+          height: existing.height || defaultHeight,
+          type: (template.type as FieldType) || existing.type,
+          label: template.label || existing.label,
+          customLabel: template.customLabel || existing.customLabel || template.label
+        };
+        updated[existingIndex] = updatedField;
+        setSelectedFieldIds([existing.id]);
+        return updated;
+      }
+
+      const newField: TemplateField = {
+        id: crypto.randomUUID(),
+        key: template.key,
+        label: template.label,
+        customLabel: template.category === 'custom' ? template.label : undefined,
+        x: 10,
+        y: 10,
+        width: defaultWidth,
+        height: defaultHeight,
+        page: currentPageIndex + 1,
+        type: (template.type as FieldType) || 'text',
+        category: (template.category as FieldCategory) || 'custom',
+        fontSize: 12,
+        fontFamily: 'Helvetica',
+        color: '#000000',
+        bold: false,
+        italic: false,
+        align: 'left',
+        dateFormat: 'alpha'
+      };
+      setSelectedFieldIds([newField.id]);
+      return [...prev, newField];
+    });
   };
 
   const getRelativeCoords = (e: MouseEvent | React.MouseEvent) => {
@@ -381,7 +472,11 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
             </button>
         </div>
 
-        <button onClick={() => { if(!officeName) return alert("Office Name required."); onSave({ id: initialTemplate?.id || crypto.randomUUID(), name, officeName, country, pages: [], fields, createdAt: initialTemplate?.createdAt || new Date().toISOString() }, pageAssets); }} className="px-8 py-3 bg-pixel rounded-xl text-white font-black text-[11px] hover:bg-pixelDark transition-all shadow-pixel">
+        <button onClick={() => { 
+          if(!officeName) return alert("Office Name required."); 
+          const cleanFields = deduplicateFields(fields);
+          onSave({ id: initialTemplate?.id || crypto.randomUUID(), name, officeName, country, pages: [], fields: cleanFields, createdAt: initialTemplate?.createdAt || new Date().toISOString() }, pageAssets); 
+        }} className="px-8 py-3 bg-pixel rounded-xl text-white font-black text-[11px] hover:bg-pixelDark transition-all shadow-pixel">
           <Save size={16} className="inline mr-2" /> DEPLOY
         </button>
       </header>
@@ -415,15 +510,81 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
               <div key={gIdx} className="mb-4">
                  <h4 className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase border-b border-surfaceElevated/30 tracking-widest">{group.title}</h4>
                  <div className="space-y-0.5 mt-2">
-                   {group.fields.filter(f => f.label.toLowerCase().includes(searchTerm.toLowerCase())).map(f => (
-                      <button key={f.key} onClick={() => addField(f)} className="w-full text-left px-4 py-2 rounded-xl hover:bg-surfaceElevated flex items-center gap-3 transition-all group/field">
-                         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-slate-500 group-hover/field:text-pixel transition-colors">{f.type === 'checkmark' ? <CheckSquare size={14}/> : f.type === 'image' ? <ImageIcon size={14}/> : <Type size={14}/>}</div>
-                         <span className="text-xs font-bold text-slate-400 group-hover/field:text-white transition-colors">{f.label}</span>
-                      </button>
-                   ))}
+                   {group.fields.filter(f => f.label.toLowerCase().includes(searchTerm.toLowerCase())).map(f => {
+                      const isPlaced = fields.some(field => field.key === f.key);
+                      return (
+                        <button key={f.key} onClick={() => addField(f)} className={`w-full text-left px-4 py-2 rounded-xl hover:bg-surfaceElevated flex items-center justify-between transition-all group/field ${isPlaced ? 'bg-pixel/5' : ''}`}>
+                           <div className="flex items-center gap-3">
+                             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-slate-500 group-hover/field:text-pixel transition-colors">{f.type === 'checkmark' ? <CheckSquare size={14}/> : f.type === 'image' ? <ImageIcon size={14}/> : <Type size={14}/>}</div>
+                             <span className="text-xs font-bold text-slate-400 group-hover/field:text-white transition-colors">{f.label}</span>
+                           </div>
+                           {isPlaced && <span className="text-[8px] font-black text-pixel">Placed</span>}
+                        </button>
+                      );
+                   })}
                  </div>
               </div>
             ))}
+
+            {/* Dynamic Custom Fields Section */}
+            <div className="mb-4">
+              <div className="px-4 py-3 border-b border-surfaceElevated/30 flex items-center justify-between">
+                <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">9. Custom Fields</h4>
+                <button 
+                  onClick={() => setShowAddCustomModal(true)}
+                  className="px-2 py-1 bg-pixel/20 text-pixel hover:bg-pixel hover:text-white rounded-lg text-[9px] font-black uppercase transition-all flex items-center gap-1"
+                >
+                  <PlusCircle size={12} /> Add
+                </button>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="p-3 bg-primary/40 m-2 rounded-2xl border border-surfaceElevated/50 space-y-2">
+                <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Quick Presets:</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { name: 'Labor ID', type: 'text' as FieldType },
+                    { name: 'Oromifa', type: 'boolean' as FieldType },
+                    { name: 'Amharic', type: 'boolean' as FieldType },
+                    { name: 'National ID', type: 'text' as FieldType },
+                    { name: 'Visa Number', type: 'text' as FieldType },
+                    { name: 'Contract No', type: 'text' as FieldType }
+                  ].map(preset => {
+                    const cleanK = 'custom_' + preset.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                    const isPlaced = fields.some(f => f.key === cleanK || f.key.toLowerCase() === preset.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+                    return (
+                      <button
+                        key={preset.name}
+                        onClick={() => handleCreateCustomField(preset.name, preset.type)}
+                        className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all border ${isPlaced ? 'bg-pixel/20 text-pixel border-pixel/40' : 'bg-surfaceElevated hover:bg-slate-700 text-slate-300 border-surfaceElevated'}`}
+                      >
+                        {isPlaced ? '✓ ' : '+ '}{preset.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-0.5 mt-2">
+                {customFields.filter(f => f.label.toLowerCase().includes(searchTerm.toLowerCase())).map(f => {
+                  const isPlaced = fields.some(field => field.key === f.key);
+                  return (
+                    <button key={f.key} onClick={() => addField(f)} className={`w-full text-left px-4 py-2 rounded-xl hover:bg-surfaceElevated flex items-center justify-between transition-all group/field ${isPlaced ? 'bg-pixel/5' : ''}`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg bg-primary flex items-center justify-center transition-colors ${f.type === 'checkmark' ? 'text-emerald-400' : f.type === 'boolean' ? 'text-pixel' : 'text-slate-500 group-hover/field:text-pixel'}`}>
+                          {f.type === 'checkmark' ? <CheckSquare size={14}/> : f.type === 'boolean' ? <span className="text-[9px] font-black">Y/N</span> : <Type size={14}/>}
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-300 group-hover/field:text-white transition-colors">{f.label}</div>
+                          <div className="text-[8px] font-black uppercase text-slate-600 tracking-wider">{f.type === 'checkmark' ? 'Checkmark' : f.type === 'boolean' ? 'Yes / No' : 'Text'}</div>
+                        </div>
+                      </div>
+                      {isPlaced && <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-pixel/20 text-pixel rounded border border-pixel/30">Placed</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </aside>
 
@@ -440,7 +601,7 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
                     key={f.id} 
                     onMouseDown={e => handleMouseDown(e, f.id)} 
                     onClick={e => e.stopPropagation()} 
-                    className={`absolute border flex items-center justify-center transition-all cursor-move ${selectedFieldIds.includes(f.id) ? 'border-pixel bg-pixel/10 z-30 ring-1 ring-pixel/20 border-solid' : 'border-slate-300 border-dashed bg-white/5 hover:border-pixel/40'}`} 
+                    className={`absolute border flex items-center justify-center transition-all cursor-move select-none ${selectedFieldIds.includes(f.id) ? 'border-pixel bg-pixel/10 z-30 ring-1 ring-pixel/20 border-solid' : 'border-slate-300 border-dashed bg-white/5 hover:border-pixel/40'}`} 
                     style={{ left: `${f.x}%`, top: `${f.y}%`, width: `${f.width}%`, height: `${f.height}%`, fontFamily: f.fontFamily, fontSize: `${f.fontSize}px`, color: f.color, textAlign: f.align, fontWeight: f.bold ? 'bold' : 'normal', fontStyle: f.italic ? 'italic' : 'normal' }}
                   >
                     {selectedFieldIds.length === 1 && selectedFieldIds[0] === f.id && (
@@ -449,7 +610,43 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
                         <ResizeHandle dir="t" /><ResizeHandle dir="b" /><ResizeHandle dir="l" /><ResizeHandle dir="r" />
                       </>
                     )}
-                    <span className="truncate px-1 w-full text-[8px] opacity-40 font-black uppercase tracking-tighter select-none">{f.type === 'checkmark' ? '✓' : (f.customLabel || f.label)}</span>
+                    {f.type === 'checkmark' ? (
+                      <div className="flex items-center justify-center gap-1 w-full h-full px-0.5 overflow-hidden pointer-events-none">
+                        <span 
+                          className="inline-flex items-center justify-center font-black leading-none select-none text-emerald-400"
+                          style={{ 
+                            fontSize: `${f.fontSize || 12}px`,
+                            lineHeight: 1
+                          }}
+                        >
+                          ✓
+                        </span>
+                        {f.width > 7 && (
+                          <span 
+                            className="truncate font-black uppercase tracking-tighter text-slate-100 opacity-70"
+                            style={{ fontSize: `${Math.max(6, Math.min(11, (f.fontSize || 12) * 0.7))}px` }}
+                          >
+                            {f.customLabel || f.label}
+                          </span>
+                        )}
+                      </div>
+                    ) : f.type === 'boolean' ? (
+                      <div 
+                        className="flex items-center justify-center w-full h-full px-1 overflow-hidden pointer-events-none"
+                        style={{
+                          fontFamily: f.fontFamily,
+                          fontSize: `${f.fontSize || 12}px`,
+                          color: f.color,
+                          textAlign: f.align || 'center',
+                          fontWeight: f.bold ? 'bold' : 'normal',
+                          fontStyle: f.italic ? 'italic' : 'normal'
+                        }}
+                      >
+                        <span className="truncate uppercase font-bold tracking-tight">YES</span>
+                      </div>
+                    ) : (
+                      <span className="truncate px-1 w-full text-[8px] opacity-60 font-black uppercase tracking-tighter select-none pointer-events-none">{f.customLabel || f.label}</span>
+                    )}
                   </div>
                 ))}
                 {marqueeRect && (
@@ -526,12 +723,42 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[9px] text-slate-500 font-black uppercase tracking-widest">Size</label>
-                  <input type="number" value={primaryField?.fontSize} onChange={e => updateSelectedFields({ fontSize: parseInt(e.target.value) })} className="w-full bg-primary border border-surfaceElevated rounded-xl px-4 py-2 text-xs text-white outline-none" />
+                  <label className="text-[9px] text-slate-500 font-black uppercase tracking-widest">
+                    {primaryField?.type === 'checkmark' ? 'Check Size' : 'Size (px)'}
+                  </label>
+                  <div className="flex items-center gap-1 bg-primary border border-surfaceElevated rounded-xl p-1">
+                    <button 
+                      type="button" 
+                      onClick={() => updateSelectedFields({ fontSize: Math.max(3, (primaryField?.fontSize || 12) - 1) })}
+                      className="w-7 h-7 bg-surface rounded-lg text-white font-black hover:bg-surfaceElevated flex items-center justify-center text-sm transition-all active:scale-95"
+                      title="Decrease size (-1)"
+                    >
+                      -
+                    </button>
+                    <input 
+                      type="number" 
+                      min="3" 
+                      max="99" 
+                      value={primaryField?.fontSize ?? 12} 
+                      onChange={e => {
+                        const val = parseInt(e.target.value);
+                        updateSelectedFields({ fontSize: isNaN(val) ? 12 : Math.max(2, val) });
+                      }} 
+                      className="w-full bg-transparent text-center font-bold text-xs text-white outline-none" 
+                    />
+                    <button 
+                      type="button" 
+                      onClick={() => updateSelectedFields({ fontSize: Math.min(99, (primaryField?.fontSize || 12) + 1) })}
+                      className="w-7 h-7 bg-surface rounded-lg text-white font-black hover:bg-surfaceElevated flex items-center justify-center text-sm transition-all active:scale-95"
+                      title="Increase size (+1)"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[9px] text-slate-500 font-black uppercase tracking-widest">Color</label>
-                  <input type="color" value={primaryField?.color} onChange={e => updateSelectedFields({ color: e.target.value })} className="w-full h-8 cursor-pointer rounded-lg bg-transparent p-0 border-none" />
+                  <input type="color" value={primaryField?.color} onChange={e => updateSelectedFields({ color: e.target.value })} className="w-full h-9 cursor-pointer rounded-xl bg-transparent p-0 border border-surfaceElevated mt-0.5" />
                 </div>
               </div>
 
@@ -573,6 +800,74 @@ export const TemplateBuilder: React.FC<Props> = ({ onSave, onCancel, initialTemp
           )}
         </aside>
       </div>
+
+      {showAddCustomModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-surface p-6 rounded-3xl border border-surfaceElevated shadow-2xl max-w-sm w-full space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-surfaceElevated">
+              <h3 className="font-black text-white text-sm uppercase tracking-wider flex items-center gap-2">
+                <PlusCircle size={16} className="text-pixel"/> Add Dynamic Field
+              </h3>
+              <button onClick={() => setShowAddCustomModal(false)} className="text-slate-500 hover:text-white text-xs font-black">✕</button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Field Label</label>
+                <input 
+                  value={newCustomName}
+                  onChange={e => setNewCustomName(e.target.value)}
+                  placeholder="e.g. LABOR ID, OROMIFA, AMHARIC..."
+                  className="w-full p-3 bg-primary border border-surfaceElevated rounded-xl text-white font-bold text-xs focus:border-pixel outline-none uppercase"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Output Mode</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewCustomType('text')}
+                    className={`p-2 rounded-xl border text-[11px] font-black uppercase transition-all ${newCustomType === 'text' ? 'bg-pixel text-white border-pixel' : 'bg-primary border-surfaceElevated text-slate-400'}`}
+                  >
+                    Text
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewCustomType('checkmark')}
+                    className={`p-2 rounded-xl border text-[11px] font-black uppercase transition-all ${newCustomType === 'checkmark' ? 'bg-pixel text-white border-pixel' : 'bg-primary border-surfaceElevated text-slate-400'}`}
+                  >
+                    Check (✓)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewCustomType('boolean')}
+                    className={`p-2 rounded-xl border text-[11px] font-black uppercase transition-all ${newCustomType === 'boolean' ? 'bg-pixel text-white border-pixel' : 'bg-primary border-surfaceElevated text-slate-400'}`}
+                  >
+                    Yes/No
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAddCustomModal(false)}
+                className="flex-1 py-2.5 bg-surfaceElevated text-slate-300 rounded-xl font-bold text-xs uppercase"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCreateCustomField()}
+                disabled={!newCustomName.trim()}
+                className="flex-1 py-2.5 bg-pixel text-white rounded-xl font-black text-xs uppercase hover:bg-pixelDark transition-all disabled:opacity-50"
+              >
+                Create & Place
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -28,7 +28,7 @@ export const PassportScanner: React.FC<Props> = ({ onScanComplete, className }) 
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
       console.error(err);
-      setError("Failed to read passport. Ensure image is clear, no glare, and contains the bottom code lines.");
+      setError(err?.message || "Failed to read passport. Ensure image is clear, no glare, and contains the bottom code lines.");
     } finally {
       setLoading(false);
       // Reset input so same file can be selected again if needed

@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { Sparkles, FileSearch, FileUp, Loader2 } from 'lucide-react';
 import { BaseFormData } from '../../types';
+import { calculateEthiopianIssueDate, fetchApiKeyFromSupabaseTables } from '../../utils/mrzHelper';
 
 interface Props {
   formData: BaseFormData;
@@ -16,23 +17,23 @@ export const AICVHelper: React.FC<Props> = ({ formData, onUpdate, mode }) => {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const handleAudit = async () => {
-    // Fix: Obtained API key exclusively from process.env.API_KEY as per initialization guidelines
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     setLoading(true);
     try {
+        const apiKey = await fetchApiKeyFromSupabaseTables();
+        const ai = new GoogleGenAI({ apiKey });
         const prompt = `Review this CV JSON data for a domestic worker. 
         Check for spelling errors and logical inconsistencies (like age vs DOB).
         Return a concise Markdown list.
         Data: ${JSON.stringify(formData)}`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: 'gemini-2.5-flash',
             contents: prompt
         });
 
         setAuditResult(response.text || "No feedback generated.");
-    } catch (e) {
-        setAuditResult("Error connecting to AI service.");
+    } catch (e: any) {
+        setAuditResult("Error connecting to AI service: " + (e?.message || e));
         console.error(e);
     } finally {
         setLoading(false);
@@ -52,12 +53,12 @@ export const AICVHelper: React.FC<Props> = ({ formData, onUpdate, mode }) => {
         const base64Data = base64String.includes(',') ? base64String.split(',')[1] : base64String;
         
         try {
-            // Fix: Obtained API key exclusively from process.env.API_KEY as per initialization guidelines
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const apiKey = await fetchApiKeyFromSupabaseTables();
+            const ai = new GoogleGenAI({ apiKey });
             const prompt = "Extract CV details into JSON. Keys: fullName, religion, dob (YYYY-MM-DD), pob, maritalStatus, children, passportNumber, issueDate, expiryDate, weight, height, expCountry, expPeriod, expPosition.";
 
             const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
+                model: 'gemini-2.5-flash',
                 contents: {
                     parts: [
                         { inlineData: { mimeType: file.type || 'image/jpeg', data: base64Data } },
@@ -77,6 +78,15 @@ export const AICVHelper: React.FC<Props> = ({ formData, onUpdate, mode }) => {
                 if (parsed.dob) updates.dob = parsed.dob;
                 if (parsed.pob) updates.pob = parsed.pob.toUpperCase();
                 if (parsed.passportNumber) updates.passportNumber = parsed.passportNumber.toUpperCase();
+                updates.placeOfIssue = 'ADDIS ABABA';
+                if (parsed.expiryDate) {
+                    updates.expiryDate = parsed.expiryDate;
+                    const autoIssue = calculateEthiopianIssueDate(parsed.expiryDate);
+                    if (autoIssue) updates.issueDate = autoIssue;
+                }
+                if (parsed.issueDate) {
+                    updates.issueDate = parsed.issueDate;
+                }
                 if (parsed.expCountry) {
                     updates.hasExperience = true;
                     updates.expCountry1 = parsed.expCountry.toUpperCase();
@@ -90,9 +100,9 @@ export const AICVHelper: React.FC<Props> = ({ formData, onUpdate, mode }) => {
                 setUploadError("AI returned empty response.");
             }
 
-        } catch (err) {
+        } catch (err: any) {
             console.error(err);
-            setUploadError("Failed to parse image.");
+            setUploadError("Failed to parse image: " + (err?.message || err));
         } finally {
             setLoading(false);
         }

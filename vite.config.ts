@@ -6,6 +6,10 @@ import process from 'process';
 export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
+    server: {
+      host: '0.0.0.0',
+      port: 3000,
+    },
     define: {
       // Point all process.env calls to the global window shim
       'process.env': 'globalThis.process.env'

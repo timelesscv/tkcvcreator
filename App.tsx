@@ -69,14 +69,22 @@ const MainApp: React.FC = () => {
         <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
           <AlertCircle className="w-10 h-10 text-red-500" />
         </div>
-        <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Engine Initialization Failed</h2>
-        <p className="text-slate-500 max-w-sm mb-8 text-sm font-medium">The application could not connect to the database or find its API vault. Check your connection or reset the session.</p>
-        <button 
-          onClick={() => { window.localStorage.clear(); window.location.reload(); }}
-          className="px-8 py-3 bg-white text-black font-black rounded-2xl hover:bg-slate-200 transition-all uppercase text-xs tracking-widest shadow-xl"
-        >
-          Factory Reset App
-        </button>
+        <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Engine Initialization</h2>
+        <p className="text-slate-500 max-w-sm mb-8 text-sm font-medium">The application could not connect to the remote database. You can launch Demo Mode to explore all features instantly.</p>
+        <div className="flex flex-col sm:flex-row gap-4">
+          <button 
+            onClick={() => { window.localStorage.setItem('pixel_demo_user', 'true'); window.location.reload(); }}
+            className="px-8 py-3 bg-pixel text-white font-black rounded-2xl hover:bg-pixelDark transition-all uppercase text-xs tracking-widest shadow-xl"
+          >
+            Launch Demo Mode
+          </button>
+          <button 
+            onClick={() => { window.localStorage.clear(); window.location.reload(); }}
+            className="px-8 py-3 bg-surfaceElevated text-slate-300 font-black rounded-2xl hover:bg-slate-700 transition-all uppercase text-xs tracking-widest shadow-xl"
+          >
+            Reset Session
+          </button>
+        </div>
       </div>
     );
   }

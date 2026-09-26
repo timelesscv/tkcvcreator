@@ -1,218 +1,333 @@
-
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { RotateCw, Check, X } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { Check, X } from 'lucide-react';
 
 interface Props {
   imageSrc: string;
-  aspectRatio: number;
+  aspectRatio?: number;
   onCrop: (croppedImage: string) => void;
   onCancel: () => void;
 }
 
-type InteractionType = 'none' | 'dragging' | 'resizing';
-type ResizeDir = 't' | 'b' | 'l' | 'r' | 'tl' | 'tr' | 'bl' | 'br';
+type DragMode = 'none' | 'move' | 'nw' | 'ne' | 'se' | 'sw' | 'n' | 's' | 'e' | 'w';
 
-export const ImageCropper: React.FC<Props> = ({ imageSrc, aspectRatio, onCrop, onCancel }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const [rotation, setRotation] = useState(0);
+interface CropBox {
+  x: number; // percentage 0-100
+  y: number; // percentage 0-100
+  w: number; // percentage 0-100
+  h: number; // percentage 0-100
+}
+
+export const ImageCropper: React.FC<Props> = ({ 
+  imageSrc, 
+  onCrop, 
+  onCancel 
+}) => {
+  const [currentImg, setCurrentImg] = useState<HTMLImageElement | null>(null);
   
-  const [cropBox, setCropBox] = useState({ x: 20, y: 20, w: 30, h: 30 / aspectRatio });
-  const [interaction, setInteraction] = useState<InteractionType>('none');
-  const [activeDir, setActiveDir] = useState<ResizeDir | null>(null);
+  // Free-moving crop box in percentages (0-100)
+  const [crop, setCrop] = useState<CropBox>({ x: 10, y: 10, w: 80, h: 80 });
   
-  const dragStart = useRef({ 
-    x: 0, 
-    y: 0, 
-    initialBox: { x: 20, y: 20, w: 30, h: 30 } 
+  const imgRef = useRef<HTMLImageElement>(null);
+  const dragRef = useRef<{
+    mode: DragMode;
+    startX: number;
+    startY: number;
+    startCrop: CropBox;
+    imgRect: DOMRect | null;
+  }>({
+    mode: 'none',
+    startX: 0,
+    startY: 0,
+    startCrop: { x: 10, y: 10, w: 80, h: 80 },
+    imgRect: null
   });
 
-  const WORKSPACE_WIDTH = 180; 
-  const WORKSPACE_HEIGHT = WORKSPACE_WIDTH / 0.75; 
-
+  // Load image
   useEffect(() => {
     const img = new Image();
-    img.src = imageSrc;
-    img.crossOrigin = "anonymous";
+    img.crossOrigin = 'anonymous';
     img.onload = () => {
-      setImage(img);
-      const initialH = 30 / aspectRatio;
-      setCropBox({ x: 20, y: 20, w: 40, h: initialH > 80 ? 60 : initialH });
+      setCurrentImg(img);
+      // Initialize free-moving crop box covering 80% centered
+      setCrop({ x: 10, y: 10, w: 80, h: 80 });
     };
-  }, [imageSrc, aspectRatio]);
+    img.src = imageSrc;
+  }, [imageSrc]);
 
-  const getCoords = (e: MouseEvent | React.MouseEvent) => {
-    if (!containerRef.current) return { x: 0, y: 0 };
-    const rect = containerRef.current.getBoundingClientRect();
-    return {
-      x: ((e.clientX - rect.left) / rect.width) * 100,
-      y: ((e.clientY - rect.top) / rect.height) * 100
-    };
-  };
-
-  const handleMouseDown = (e: React.MouseEvent, type: InteractionType, dir: ResizeDir | null = null) => {
+  // Pointer down on frame or handle
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent, mode: DragMode) => {
+    e.preventDefault();
     e.stopPropagation();
-    const coords = getCoords(e);
-    dragStart.current = { x: coords.x, y: coords.y, initialBox: { ...cropBox } };
-    setInteraction(type);
-    setActiveDir(dir);
+    if (!imgRef.current) return;
+
+    const clientX = 'touches' in e.nativeEvent ? e.nativeEvent.touches[0].clientX : e.nativeEvent.clientX;
+    const clientY = 'touches' in e.nativeEvent ? e.nativeEvent.touches[0].clientY : e.nativeEvent.clientY;
+
+    dragRef.current = {
+      mode,
+      startX: clientX,
+      startY: clientY,
+      startCrop: { ...crop },
+      imgRect: imgRef.current.getBoundingClientRect()
+    };
   };
-
-  const handleMouseMove = useCallback((e: MouseEvent) => {
-    if (interaction === 'none') return;
-    const coords = getCoords(e);
-    const dx = coords.x - dragStart.current.x;
-    const dy = coords.y - dragStart.current.y;
-    const init = dragStart.current.initialBox;
-
-    if (interaction === 'dragging') {
-      setCropBox(prev => ({
-        ...prev,
-        x: Math.max(0, Math.min(100 - prev.w, init.x + dx)),
-        y: Math.max(0, Math.min(100 - prev.h, init.y + dy))
-      }));
-    } else if (interaction === 'resizing' && activeDir) {
-      setCropBox(prev => {
-        let { x, y, w, h } = { ...prev };
-        const minSize = 5;
-        if (activeDir.includes('r')) w = Math.max(minSize, Math.min(100 - init.x, init.w + dx));
-        if (activeDir.includes('l')) {
-          const delta = init.x - coords.x;
-          if (init.w + delta > minSize) { x = Math.max(0, coords.x); w = init.w + (init.x - x); }
-        }
-        if (activeDir.includes('b')) h = Math.max(minSize, Math.min(100 - init.y, init.h + dy));
-        if (activeDir.includes('t')) {
-          const delta = init.y - coords.y;
-          if (init.h + delta > minSize) { y = Math.max(0, coords.y); h = init.h + (init.y - y); }
-        }
-        return { x, y, w, h };
-      });
-    }
-  }, [interaction, activeDir]);
-
-  const handleMouseUp = useCallback(() => setInteraction('none'), []);
 
   useEffect(() => {
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [handleMouseMove, handleMouseUp]);
+    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
+      const { mode, startX, startY, startCrop, imgRect } = dragRef.current;
+      if (mode === 'none' || !imgRect || !currentImg) return;
 
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+      const dxPx = clientX - startX;
+      const dyPx = clientY - startY;
+
+      // Convert pixel deltas to percentage of image
+      const dx = (dxPx / imgRect.width) * 100;
+      const dy = (dyPx / imgRect.height) * 100;
+
+      if (mode === 'move') {
+        const maxX = 100 - startCrop.w;
+        const maxY = 100 - startCrop.h;
+        setCrop({
+          x: Math.max(0, Math.min(maxX, startCrop.x + dx)),
+          y: Math.max(0, Math.min(maxY, startCrop.y + dy)),
+          w: startCrop.w,
+          h: startCrop.h
+        });
+        return;
+      }
+
+      // 100% Free-move resizing on every handle
+      let newX = startCrop.x;
+      let newY = startCrop.y;
+      let newW = startCrop.w;
+      let newH = startCrop.h;
+      const minSize = 5;
+
+      if (mode.includes('e')) {
+        newW = Math.max(minSize, Math.min(100 - startCrop.x, startCrop.w + dx));
+      }
+      if (mode.includes('w')) {
+        const proposedW = startCrop.w - dx;
+        if (proposedW >= minSize && startCrop.x + dx >= 0) {
+          newX = startCrop.x + dx;
+          newW = proposedW;
+        }
+      }
+      if (mode.includes('s')) {
+        newH = Math.max(minSize, Math.min(100 - startCrop.y, startCrop.h + dy));
+      }
+      if (mode.includes('n')) {
+        const proposedH = startCrop.h - dy;
+        if (proposedH >= minSize && startCrop.y + dy >= 0) {
+          newY = startCrop.y + dy;
+          newH = proposedH;
+        }
+      }
+
+      setCrop({
+        x: Math.max(0, Math.min(100 - newW, newX)),
+        y: Math.max(0, Math.min(100 - newH, newY)),
+        w: Math.max(minSize, Math.min(100, newW)),
+        h: Math.max(minSize, Math.min(100, newH))
+      });
+    };
+
+    const handlePointerUp = () => {
+      dragRef.current.mode = 'none';
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', handlePointerMove, { passive: false });
+    window.addEventListener('touchend', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('touchend', handlePointerUp);
+    };
+  }, [currentImg]);
+
+  // Export cropped image cleanly
   const handleSave = () => {
-    if (!image) return;
+    if (!currentImg) return;
+
+    const nw = currentImg.naturalWidth;
+    const nh = currentImg.naturalHeight;
+
+    const sx = Math.max(0, Math.round((crop.x / 100) * nw));
+    const sy = Math.max(0, Math.round((crop.y / 100) * nh));
+    const sw = Math.min(nw - sx, Math.round((crop.w / 100) * nw));
+    const sh = Math.min(nh - sy, Math.round((crop.h / 100) * nh));
+
+    if (sw <= 0 || sh <= 0) return;
+
     const canvas = document.createElement('canvas');
-    const exportW = 1000;
-    const exportH = (cropBox.h / cropBox.w) * exportW;
-    canvas.width = exportW;
-    canvas.height = exportH;
+    canvas.width = sw;
+    canvas.height = sh;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.save();
-    ctx.translate(exportW / 2, exportH / 2);
-    ctx.rotate((rotation * Math.PI) / 180);
-    const drawW = (100 / cropBox.w) * exportW;
-    const drawH = drawW * (image.height / image.width);
-    const offX = -(cropBox.x + cropBox.w / 2 - 50) * (exportW / cropBox.w);
-    const offY = -(cropBox.y + cropBox.h / 2 - 50) * (exportH / cropBox.h);
-    ctx.drawImage(image, -drawW / 2 + offX, -drawH / 2 + offY, drawW, drawH);
-    ctx.restore();
-    onCrop(canvas.toDataURL('image/png', 1.0));
+    ctx.drawImage(currentImg, sx, sy, sw, sh, 0, 0, sw, sh);
+    const cropped = canvas.toDataURL('image/png', 0.95);
+    onCrop(cropped);
   };
 
-  const Handle = ({ dir, className }: { dir: ResizeDir, className: string }) => (
-    <div 
-      onMouseDown={(e) => handleMouseDown(e, 'resizing', dir)}
-      className={`absolute w-2 h-2 bg-white border border-pixel rounded-full z-30 shadow-md hover:scale-125 transition-transform ${className}`}
-    />
-  );
-
-  return (
-    <div className="fixed inset-0 z-[600] bg-black/90 flex items-center justify-center p-2 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#1c222b] rounded-[32px] border border-white/10 shadow-2xl overflow-hidden p-4 flex flex-row items-stretch gap-4 max-w-[340px] w-full">
+  // Render via React portal to document.body so parent overflow-hidden / backdrop-blur NEVER cuts it off
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-3 select-none">
+      <div className="bg-[#121620] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-w-lg w-full max-h-[92vh]">
         
-        {/* LEFT: WORKSPACE */}
-        <div 
-          ref={containerRef}
-          className="relative bg-black rounded-2xl overflow-hidden border border-white/5 flex-1 select-none shadow-2xl"
-          style={{ height: WORKSPACE_HEIGHT }}
-        >
-          {image && (
-            <img 
-              src={imageSrc} 
-              className="w-full h-full object-contain pointer-events-none transition-transform"
-              style={{ transform: `rotate(${rotation}deg)` }}
-            />
-          )}
+        {/* Top Header - Always visible with Save and Cancel */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-[#161c28]">
+          <span className="text-xs font-black uppercase text-white tracking-wider">Crop Photo</span>
           
-          <div className="absolute inset-0 bg-black/50 pointer-events-none" />
-
-          <div 
-            onMouseDown={(e) => handleMouseDown(e, 'dragging')}
-            className="absolute border-2 border-white z-20 cursor-move shadow-[0_0_0_1000px_rgba(0,0,0,0.5)]"
-            style={{ left: `${cropBox.x}%`, top: `${cropBox.y}%`, width: `${cropBox.w}%`, height: `${cropBox.h}%` }}
-          >
-            <Handle dir="tl" className="-top-1 -left-1 cursor-nw-resize" />
-            <Handle dir="tr" className="-top-1 -right-1 cursor-ne-resize" />
-            <Handle dir="bl" className="-bottom-1 -left-1 cursor-sw-resize" />
-            <Handle dir="br" className="-bottom-1 -right-1 cursor-se-resize" />
-            <Handle dir="t" className="-top-1 left-1/2 -translate-x-1/2 cursor-n-resize" />
-            <Handle dir="b" className="-bottom-1 left-1/2 -translate-x-1/2 cursor-s-resize" />
-            <Handle dir="l" className="-left-1 top-1/2 -translate-y-1/2 cursor-w-resize" />
-            <Handle dir="r" className="-right-1 top-1/2 -translate-y-1/2 cursor-e-resize" />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center gap-1"
+            >
+              <X size={14} /> Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-4 py-1.5 rounded-xl bg-pixel hover:bg-pixelDark text-white text-xs font-black uppercase tracking-wider shadow-pixel flex items-center gap-1.5 transition-all active:scale-95"
+            >
+              <Check size={14} /> Save
+            </button>
           </div>
         </div>
 
-        {/* RIGHT: SIDEBAR */}
-        <div className="flex flex-col gap-3 w-[100px] shrink-0">
-          <div className="space-y-1">
-            <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest block text-center">Preview</span>
-            <div className="bg-black rounded-lg border border-white/10 p-1 aspect-[3/4] overflow-hidden flex items-center justify-center">
-               <div className="relative w-full h-full bg-zinc-900 rounded-[2px] overflow-hidden">
-                 {image && (
-                    <img 
-                      src={imageSrc} 
-                      className="absolute max-none"
-                      style={{ 
-                        width: (100 / cropBox.w) * 100 + '%',
-                        left: -(cropBox.x * (100 / cropBox.w)) + '%',
-                        top: -(cropBox.y * (100 / cropBox.h)) + '%',
-                        transform: `rotate(${rotation}deg)`,
-                        transformOrigin: 'center'
-                      }}
-                    />
-                 )}
-               </div>
+        {/* Free-Moving Framing Area */}
+        <div className="relative bg-black flex-1 flex items-center justify-center p-2 overflow-hidden min-h-[280px] max-h-[65vh]">
+          {currentImg ? (
+            <div className="relative inline-block max-w-full max-h-full">
+              <img
+                ref={imgRef}
+                src={currentImg.src}
+                alt="Source"
+                className="max-h-[60vh] max-w-full w-auto h-auto object-contain block mx-auto pointer-events-none select-none"
+              />
+
+              {/* Outside Dark Overlay */}
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.65)',
+                  clipPath: `polygon(
+                    0% 0%, 0% 100%, 100% 100%, 100% 0%,
+                    ${crop.x}% 0%,
+                    ${crop.x}% ${crop.y}%,
+                    ${crop.x + crop.w}% ${crop.y}%,
+                    ${crop.x + crop.w}% ${crop.y + crop.h}%,
+                    ${crop.x}% ${crop.y + crop.h}%,
+                    ${crop.x}% 0%
+                  )`
+                }}
+              />
+
+              {/* Free-moving Crop Frame */}
+              <div
+                onMouseDown={(e) => handlePointerDown(e, 'move')}
+                onTouchStart={(e) => handlePointerDown(e, 'move')}
+                className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.7)] cursor-move z-20"
+                style={{
+                  left: `${crop.x}%`,
+                  top: `${crop.y}%`,
+                  width: `${crop.w}%`,
+                  height: `${crop.h}%`
+                }}
+              >
+                {/* 3x3 Grid */}
+                <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3 opacity-25">
+                  <div className="border-r border-b border-white" />
+                  <div className="border-r border-b border-white" />
+                  <div className="border-b border-white" />
+                  <div className="border-r border-b border-white" />
+                  <div className="border-r border-b border-white" />
+                  <div className="border-b border-white" />
+                  <div className="border-r border-white" />
+                  <div className="border-r border-white" />
+                  <div />
+                </div>
+
+                {/* 4 Corner Handles */}
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'nw')}
+                  onTouchStart={(e) => handlePointerDown(e, 'nw')}
+                  className="absolute -top-2 -left-2 w-4 h-4 bg-white border-2 border-pixel rounded-full shadow-md cursor-nwse-resize"
+                />
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'ne')}
+                  onTouchStart={(e) => handlePointerDown(e, 'ne')}
+                  className="absolute -top-2 -right-2 w-4 h-4 bg-white border-2 border-pixel rounded-full shadow-md cursor-nesw-resize"
+                />
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'sw')}
+                  onTouchStart={(e) => handlePointerDown(e, 'sw')}
+                  className="absolute -bottom-2 -left-2 w-4 h-4 bg-white border-2 border-pixel rounded-full shadow-md cursor-nesw-resize"
+                />
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'se')}
+                  onTouchStart={(e) => handlePointerDown(e, 'se')}
+                  className="absolute -bottom-2 -right-2 w-4 h-4 bg-white border-2 border-pixel rounded-full shadow-md cursor-nwse-resize"
+                />
+
+                {/* 4 Edge Handles */}
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'n')}
+                  onTouchStart={(e) => handlePointerDown(e, 'n')}
+                  className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-6 h-2.5 bg-white border border-pixel rounded-full shadow cursor-ns-resize"
+                />
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 's')}
+                  onTouchStart={(e) => handlePointerDown(e, 's')}
+                  className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-6 h-2.5 bg-white border border-pixel rounded-full shadow cursor-ns-resize"
+                />
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'w')}
+                  onTouchStart={(e) => handlePointerDown(e, 'w')}
+                  className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-2.5 h-6 bg-white border border-pixel rounded-full shadow cursor-ew-resize"
+                />
+                <div
+                  onMouseDown={(e) => handlePointerDown(e, 'e')}
+                  onTouchStart={(e) => handlePointerDown(e, 'e')}
+                  className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-6 bg-white border border-pixel rounded-full shadow cursor-ew-resize"
+                />
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="text-slate-400 text-xs font-bold animate-pulse">Loading image...</div>
+          )}
+        </div>
 
-          <button 
-            onClick={() => setRotation(r => (r + 90) % 360)}
-            className="w-full py-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 border border-white/5 flex items-center justify-center gap-1.5 font-black text-[8px] uppercase tracking-widest"
+        {/* Bottom Bar with large Save & Cancel buttons */}
+        <div className="px-4 py-3 bg-[#161c28] border-t border-white/10 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5"
           >
-            <RotateCw size={10} /> Rotate
+            <X size={15} /> Cancel
           </button>
-
-          <div className="mt-auto flex flex-col gap-2">
-            <button 
-              onClick={handleSave} 
-              className="w-full py-2.5 bg-pixel text-white font-black text-[9px] uppercase tracking-widest rounded-xl hover:bg-pixelDark transition-all shadow-pixel flex items-center justify-center gap-1.5"
-            >
-              <Check size={12} /> Save
-            </button>
-            <button 
-              onClick={onCancel} 
-              className="w-full py-2 bg-transparent text-slate-600 font-black text-[9px] uppercase tracking-widest hover:text-white transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl bg-pixel hover:bg-pixelDark text-white text-xs font-black uppercase tracking-wider shadow-pixel flex items-center justify-center gap-2 transition-all active:scale-95"
+          >
+            <Check size={15} /> Save Crop
+          </button>
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

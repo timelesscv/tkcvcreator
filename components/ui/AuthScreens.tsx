@@ -8,16 +8,18 @@ export const AuthScreen: React.FC = () => {
   const { login, register } = useAuth();
   const [formData, setFormData] = useState({ email: '', password: '', agencyName: '', name: '', phone: '' });
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
     setLoading(true);
     try {
       if (isRegister) {
         await register(formData);
-        alert("Registration Successful! You can now sign in.");
+        setSuccessMessage("Registration successful! You can now sign in.");
         setIsRegister(false);
       } else {
         await login(formData);
@@ -25,6 +27,18 @@ export const AuthScreen: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDemoAccess = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      await login({ email: 'demo@pixelcv.agency', password: 'demo' });
+    } catch (err: any) {
+      setError(err.message || 'Failed to initialize demo session');
     } finally {
       setLoading(false);
     }
@@ -44,6 +58,12 @@ export const AuthScreen: React.FC = () => {
           <h1 className="text-3xl font-bold text-white mb-2">{isRegister ? 'Join the Network' : 'Agency Portal'}</h1>
           <p className="text-slate-400">Professional CV Generation Platform</p>
         </div>
+
+        {successMessage && (
+          <div className="mb-4 text-green-400 text-sm text-center bg-green-900/20 border border-green-500/30 p-3 rounded-xl font-medium">
+            {successMessage}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {isRegister && (
@@ -83,8 +103,17 @@ export const AuthScreen: React.FC = () => {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <button onClick={() => setIsRegister(!isRegister)} className="text-slate-400 hover:text-white underline">
+        <div className="mt-4 pt-4 border-t border-surfaceElevated text-center space-y-3">
+          <button 
+            type="button"
+            onClick={handleDemoAccess}
+            disabled={loading}
+            className="w-full py-3 bg-surfaceElevated hover:bg-slate-700/50 text-pixel hover:text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+          >
+            ⚡ Instant Demo Agency Access
+          </button>
+
+          <button onClick={() => { setError(''); setSuccessMessage(''); setIsRegister(!isRegister); }} className="text-slate-400 hover:text-white underline text-sm">
             {isRegister ? 'Already have an account? Sign In' : 'Need an account? Register'}
           </button>
         </div>
