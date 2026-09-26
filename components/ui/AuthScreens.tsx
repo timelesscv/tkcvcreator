@@ -32,18 +32,6 @@ export const AuthScreen: React.FC = () => {
     }
   };
 
-  const handleDemoAccess = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      await login({ email: 'demo@pixelcv.agency', password: 'demo' });
-    } catch (err: any) {
-      setError(err.message || 'Failed to initialize demo session');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-primary relative overflow-hidden">
         {/* Animated Background Elements */}
@@ -103,16 +91,7 @@ export const AuthScreen: React.FC = () => {
           </button>
         </form>
 
-        <div className="mt-4 pt-4 border-t border-surfaceElevated text-center space-y-3">
-          <button 
-            type="button"
-            onClick={handleDemoAccess}
-            disabled={loading}
-            className="w-full py-3 bg-surfaceElevated hover:bg-slate-700/50 text-pixel hover:text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-          >
-            ⚡ Instant Demo Agency Access
-          </button>
-
+        <div className="mt-4 pt-4 border-t border-surfaceElevated text-center">
           <button onClick={() => { setError(''); setSuccessMessage(''); setIsRegister(!isRegister); }} className="text-slate-400 hover:text-white underline text-sm">
             {isRegister ? 'Already have an account? Sign In' : 'Need an account? Register'}
           </button>
