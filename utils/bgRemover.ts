@@ -17,7 +17,7 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
     throw new Error("No active Gemini API key found. Please check API Vault in Admin settings.");
   }
 
-  const candidateModels = ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image'];
+  const candidateModels = ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'];
   let lastErrorMessage = '';
 
   for (const apiKey of keys) {
@@ -51,6 +51,10 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
       } catch (err: any) {
         lastErrorMessage = err?.message || String(err);
         console.warn(`[BG Studio] Model ${model} with key ${apiKey.substring(0, 8)}... notice:`, lastErrorMessage);
+        // If rate limit or quota exceeded, break to next key immediately instead of hammering same key with different models
+        if (lastErrorMessage.includes('quota') || lastErrorMessage.includes('RESOURCE_EXHAUSTED') || lastErrorMessage.includes('429')) {
+          break;
+        }
       }
     }
   }
@@ -58,7 +62,7 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
   // If AI generation could not complete, throw informative error
   if (lastErrorMessage) {
     if (lastErrorMessage.includes('quota') || lastErrorMessage.includes('RESOURCE_EXHAUSTED') || lastErrorMessage.includes('429')) {
-      throw new Error("Gemini quota exceeded on active keys. Please add a fresh key to Supabase.");
+      throw new Error("Gemini API rate limit exceeded. Please add a second key to Supabase or wait 1 minute.");
     }
     throw new Error(`AI service error: ${lastErrorMessage}`);
   }
@@ -66,42 +70,71 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
 };
 
 /**
- * Normalizes input image into base64 data and mimeType
+ * Normalizes and optimizes input image (scales down large phone photos to max 1024px to prevent token quota exhaustion)
  */
 async function parseImageInput(input: string): Promise<{ data: string; mimeType: string; fullDataUrl: string }> {
-  if (input.startsWith('data:')) {
-    const match = input.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      let mime = match[1];
-      if (mime === 'image/jpg') mime = 'image/jpeg';
-      return { data: match[2], mimeType: mime, fullDataUrl: input };
-    }
-  }
-
+  // First obtain raw data URL
+  let rawUrl = input;
   if (input.startsWith('http') || input.startsWith('blob:')) {
-    const response = await fetch(input);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        const match = result.match(/^data:([^;]+);base64,(.+)$/);
-        if (match) {
-          let mime = match[1];
-          if (mime === 'image/jpg') mime = 'image/jpeg';
-          resolve({ data: match[2], mimeType: mime, fullDataUrl: result });
-        } else {
-          resolve({ data: result.split(',')[1] || result, mimeType: 'image/jpeg', fullDataUrl: result });
-        }
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    try {
+      const response = await fetch(input);
+      const blob = await response.blob();
+      rawUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch {}
+  } else if (!input.startsWith('data:')) {
+    rawUrl = `data:image/jpeg;base64,${input}`;
   }
 
-  return {
-    data: input,
-    mimeType: 'image/jpeg',
-    fullDataUrl: `data:image/jpeg;base64,${input}`
-  };
+  // Downscale to max 1024px to reduce token consumption by 90%+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const maxDim = 1024;
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        const optimizedUrl = canvas.toDataURL('image/jpeg', 0.88);
+        const match = optimizedUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          resolve({ data: match[2], mimeType: match[1], fullDataUrl: optimizedUrl });
+          return;
+        }
+      }
+      // Fallback if canvas context fails
+      const fallbackMatch = rawUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (fallbackMatch) {
+        resolve({ data: fallbackMatch[2], mimeType: fallbackMatch[1], fullDataUrl: rawUrl });
+      } else {
+        resolve({ data: rawUrl.split(',')[1] || rawUrl, mimeType: 'image/jpeg', fullDataUrl: rawUrl });
+      }
+    };
+    img.onerror = () => {
+      const fallbackMatch = rawUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (fallbackMatch) {
+        resolve({ data: fallbackMatch[2], mimeType: fallbackMatch[1], fullDataUrl: rawUrl });
+      } else {
+        resolve({ data: rawUrl.split(',')[1] || rawUrl, mimeType: 'image/jpeg', fullDataUrl: rawUrl });
+      }
+    };
+    img.src = rawUrl;
+  });
 }
