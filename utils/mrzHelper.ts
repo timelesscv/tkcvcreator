@@ -54,6 +54,22 @@ export async function getActiveGeminiApiKeys(): Promise<string[]> {
     addKey((globalThis as any).process?.env?.API_KEY);
   } catch {}
 
+  // 1. Query dedicated Supabase 'gemini_keys' table (only api keys)
+  try {
+    const { data: gkData } = await supabase
+      .from('gemini_keys')
+      .select('*')
+      .eq('is_active', true);
+
+    if (gkData && gkData.length > 0) {
+      gkData.forEach((row: any) => {
+        addKey(row.key || row.key_value || row.api_key);
+      });
+    }
+  } catch (err) {
+    // Table may not exist yet if user hasn't created it
+  }
+
   // 2. Query Supabase api_vault table (active keys)
   try {
     const { data: vaultData, error: vaultError } = await supabase
