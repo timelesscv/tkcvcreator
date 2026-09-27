@@ -17,7 +17,8 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
     throw new Error("No active Gemini API key found. Please check API Vault in Admin settings.");
   }
 
-  const candidateModels = ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'];
+  const candidateModels = ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image'];
+  let lastErrorMessage = '';
 
   for (const apiKey of keys) {
     if (!apiKey) continue;
@@ -48,12 +49,19 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
           }
         }
       } catch (err: any) {
-        console.warn(`[BG Studio] Model ${model} notice:`, err?.message || err);
+        lastErrorMessage = err?.message || String(err);
+        console.warn(`[BG Studio] Model ${model} with key ${apiKey.substring(0, 8)}... notice:`, lastErrorMessage);
       }
     }
   }
 
-  // If AI generation could not complete, throw clean error without modifying original photo
+  // If AI generation could not complete, throw informative error
+  if (lastErrorMessage) {
+    if (lastErrorMessage.includes('quota') || lastErrorMessage.includes('RESOURCE_EXHAUSTED') || lastErrorMessage.includes('429')) {
+      throw new Error("Gemini quota exceeded on active keys. Please add a fresh key to Supabase.");
+    }
+    throw new Error(`AI service error: ${lastErrorMessage}`);
+  }
   throw new Error("AI service temporarily unavailable. Please try again in a moment.");
 };
 
