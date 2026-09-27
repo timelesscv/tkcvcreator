@@ -1,21 +1,39 @@
+import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
 import { GoogleGenAI } from "@google/genai";
 import { getActiveGeminiApiKeys } from "./mrzHelper";
 
 /**
  * AI Studio Background Replacer:
- * Replaces busy backgrounds (or unwanted checkerboard artifacts) with a clean, flat, 
- * solid pure studio white (#FFFFFF) background, keeping the subject completely intact.
+ * 1. Uses fast in-browser Neural Segmentation to isolate the subject without API rate limits.
+ * 2. Composites onto a clean, flat, seamless solid pure studio white (#FFFFFF) background.
+ * 3. Falls back to Gemini Vision models if needed.
  */
 export const removeBackground = async (imageBase64: string): Promise<string> => {
   if (!imageBase64) throw new Error("No image provided");
 
-  const { data, mimeType, fullDataUrl } = await parseImageInput(imageBase64);
+  const { fullDataUrl } = await parseImageInput(imageBase64);
 
-  // 1. Pull active Gemini API keys
-  const keys = await getActiveGeminiApiKeys();
-  if (keys.length === 0) {
-    throw new Error("No active Gemini API key found. Please check API Vault in Admin settings.");
+  // Strategy 1: High-precision in-browser AI segmentation (Zero API limits, 100% free, runs client-side)
+  try {
+    const blob = await imglyRemoveBackground(fullDataUrl, {
+      progress: (key, current, total) => {
+        // optional progress tracking
+      }
+    });
+
+    if (blob) {
+      const whiteStudioDataUrl = await compositeOnSolidWhite(blob);
+      if (whiteStudioDataUrl) {
+        return whiteStudioDataUrl;
+      }
+    }
+  } catch (clientAiErr) {
+    console.warn("[BG Studio] Client-side AI fallback to Gemini API:", clientAiErr);
   }
+
+  // Strategy 2: Gemini API Fallback
+  const keys = await getActiveGeminiApiKeys();
+  const { data, mimeType } = await parseImageInput(imageBase64);
 
   const candidateModels = ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'];
   let lastErrorMessage = '';
@@ -51,7 +69,6 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
       } catch (err: any) {
         lastErrorMessage = err?.message || String(err);
         console.warn(`[BG Studio] Model ${model} with key ${apiKey.substring(0, 8)}... notice:`, lastErrorMessage);
-        // If rate limit or quota exceeded, break to next key immediately instead of hammering same key with different models
         if (lastErrorMessage.includes('quota') || lastErrorMessage.includes('RESOURCE_EXHAUSTED') || lastErrorMessage.includes('429')) {
           break;
         }
@@ -59,15 +76,43 @@ export const removeBackground = async (imageBase64: string): Promise<string> => 
     }
   }
 
-  // If AI generation could not complete, throw informative error
   if (lastErrorMessage) {
-    if (lastErrorMessage.includes('quota') || lastErrorMessage.includes('RESOURCE_EXHAUSTED') || lastErrorMessage.includes('429')) {
-      throw new Error("Gemini API rate limit exceeded. Please add a second key to Supabase or wait 1 minute.");
-    }
-    throw new Error(`AI service error: ${lastErrorMessage}`);
+    throw new Error(`AI background removal notice: ${lastErrorMessage}`);
   }
   throw new Error("AI service temporarily unavailable. Please try again in a moment.");
 };
+
+/**
+ * Composites a transparent PNG blob onto a pure solid white studio backdrop
+ */
+async function compositeOnSolidWhite(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve('');
+        return;
+      }
+      // Fill flat studio pure white (#FFFFFF)
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Draw subject over white background
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg', 0.95));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve('');
+    };
+    img.src = url;
+  });
+}
 
 /**
  * Normalizes and optimizes input image (scales down large phone photos to max 1024px to prevent token quota exhaustion)
