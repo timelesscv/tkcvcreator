@@ -405,12 +405,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const getApiKeys = async () => {
     let cloudKeys: any[] = [];
+    // 1. Try gemini_keys table
+    try {
+      const { data, error } = await supabase.from('gemini_keys').select('*').order('created_at', { ascending: false });
+      if (!error && data && data.length > 0) {
+        data.forEach(row => {
+          cloudKeys.push({
+            id: row.id,
+            key_value: row.key || row.key_value || row.api_key,
+            is_active: row.is_active ?? true,
+            created_at: row.created_at,
+            table: 'gemini_keys'
+          });
+        });
+      }
+    } catch {}
+
+    // 2. Try api_vault table
     try {
       const { data, error } = await supabase.from('api_vault').select('*').order('created_at', { ascending: false });
-      if (!error && data) cloudKeys = data;
+      if (!error && data) {
+        data.forEach(row => {
+          if (!cloudKeys.some(ck => ck.key_value === row.key_value)) {
+            cloudKeys.push({
+              id: row.id,
+              key_value: row.key_value,
+              is_active: row.is_active ?? true,
+              created_at: row.created_at,
+              table: 'api_vault'
+            });
+          }
+        });
+      }
     } catch (e) {
       console.warn("api_vault fetch note:", e);
     }
+
     let localKeys: any[] = [];
     try {
       const saved = localStorage.getItem('pixel_api_vault');
@@ -431,13 +461,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!trimmed) return;
 
     let insertedToCloud = false;
+
+    // Try inserting into gemini_keys
+    try {
+      const { error: gkErr } = await supabase.from('gemini_keys').insert([{ key: trimmed, is_active: true }]);
+      if (!gkErr) insertedToCloud = true;
+    } catch {}
+
+    // Also try inserting into api_vault
     try {
       const { error } = await supabase.from('api_vault').insert([{ key_value: trimmed, is_active: true }]);
       if (!error) insertedToCloud = true;
-      else console.warn("Supabase insert note (RLS):", error.message);
-    } catch (e: any) {
-      console.warn("Supabase insert error (RLS):", e?.message);
-    }
+    } catch {}
 
     if (!insertedToCloud) {
       try {
@@ -459,6 +494,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const toggleApiKey = async (id: string, is_active: boolean) => {
     try {
+      await supabase.from('gemini_keys').update({ is_active }).eq('id', id);
+    } catch (e) {}
+    try {
       await supabase.from('api_vault').update({ is_active }).eq('id', id);
     } catch (e) {}
 
@@ -470,6 +508,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteApiKey = async (id: string) => {
+    try {
+      await supabase.from('gemini_keys').delete().eq('id', id);
+    } catch (e) {}
     try {
       await supabase.from('api_vault').delete().eq('id', id);
     } catch (e) {}
