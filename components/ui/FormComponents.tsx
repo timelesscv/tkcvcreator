@@ -94,13 +94,13 @@ export const PhotoUpload: React.FC<{ label: string; type: 'face' | 'full' | 'pas
     } catch (err: any) {
       const msg = err?.message || '';
       if (msg.includes('No active Gemini API key') || msg.includes('API key')) {
-        setError("No Gemini API key found. Add VITE_GEMINI_API_KEY on Vercel or in Admin Settings.");
-      } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota') || msg.includes('rate limit')) {
-        setError("Gemini API rate limit exceeded. Please try again in 1 minute.");
+        setError("No Gemini API key found. Please add a key in Admin Settings.");
+      } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate limit')) {
+        setError("Gemini API rate limit reached. Please try again in 1 minute.");
       } else {
         setError(msg || "Failed to remove background. Please try again.");
       }
-      setTimeout(() => setError(null), 5000);
+      setTimeout(() => setError(null), 6000);
     } finally {
       setIsRemovingBg(false);
     }
