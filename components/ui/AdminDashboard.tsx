@@ -54,6 +54,7 @@ export const AdminDashboard: React.FC = () => {
             .channel('admin-dashboard')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => refreshData(true))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'api_vault' }, () => refreshData(true))
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'gemini_keys' }, () => refreshData(true))
             .subscribe((status) => {
                 if (status === 'SUBSCRIBED') setIsRealtime(true);
             });
@@ -101,7 +102,13 @@ returns boolean as $$
   );
 $$ language sql security definer;
 
--- 2. ENABLE RLS
+-- 2. CREATE TABLE & ENABLE RLS
+create table if not exists public.api_vault (
+  id uuid primary key default gen_random_uuid(),
+  key_value text not null,
+  is_active boolean default true,
+  created_at timestamp with time zone default now()
+);
 alter table profiles enable row level security;
 alter table api_vault enable row level security;
 
@@ -118,8 +125,8 @@ create policy "Users view own" on profiles for select to authenticated using ( a
 -- 4. API VAULT POLICIES
 drop policy if exists "Everyone can read active keys" on api_vault;
 create policy "Everyone can read active keys" on api_vault 
-for select to authenticated 
-using ( is_active = true OR is_admin() );
+for select 
+using ( is_active = true );
 
 drop policy if exists "Only admins can manage keys" on api_vault;
 create policy "Only admins can manage keys" on api_vault 
@@ -496,7 +503,13 @@ returns boolean as $$
   );
 $$ language sql security definer;
 
--- 2. ENABLE RLS
+-- 2. CREATE TABLE & ENABLE RLS
+create table if not exists public.api_vault (
+  id uuid primary key default gen_random_uuid(),
+  key_value text not null,
+  is_active boolean default true,
+  created_at timestamp with time zone default now()
+);
 alter table profiles enable row level security;
 alter table api_vault enable row level security;
 
@@ -513,8 +526,8 @@ create policy "Users view own" on profiles for select to authenticated using ( a
 -- 4. API VAULT POLICIES
 drop policy if exists "Everyone can read active keys" on api_vault;
 create policy "Everyone can read active keys" on api_vault 
-for select to authenticated 
-using ( is_active = true OR is_admin() );
+for select 
+using ( is_active = true );
 
 drop policy if exists "Only admins can manage keys" on api_vault;
 create policy "Only admins can manage keys" on api_vault 
