@@ -1,31 +1,30 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { BaseFormData, TemplateField } from '../../types';
-import { FormInput, FormCheckbox, FormSection, PhotoUpload, Header, BackButton, FormSelect, FormRadio } from '../ui/FormComponents';
-import { ImageIcon, Sparkles, FileText, ChevronRight, Building, User, Briefcase, Languages, History, Contact, PlusCircle, CheckCircle2 } from 'lucide-react';
+import { FormInput, FormSection, PhotoUpload, Header, BackButton, FormRadio, FormCheckbox, FormSelect } from '../ui/FormComponents';
+import { ImageIcon, Sparkles, Languages, User, ChevronRight, ListChecks, Building, Plus, History, Contact, CheckCircle2, PlusCircle, Loader2, FilePlus } from 'lucide-react';
 import { generateTemplatePDF } from '../../utils/pdfGenerator';
 import { processPassportImage, MRZData, calculateEthiopianIssueDate } from '../../utils/mrzHelper';
 import { useAuth } from '../../context/AuthContext';
 
 interface Props {
-  country: string;
-  flag: string;
   onBack: () => void;
 }
 
-export default function DynamicCountryForm({ country, flag, onBack }: Props) {
+const AllForm: React.FC<Props> = ({ onBack }) => {
   const { user, trackGeneration, templates } = useAuth();
-  const countryTemplates = templates.filter(t => t.country === country);
   
+  const [officeOverrides, setOfficeOverrides] = useState<Record<string, { refNo: string, monthlySalary: string }>>({});
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [formData, setFormData] = useState<BaseFormData>(() => ({
+
+  const [formData, setFormData] = useState<BaseFormData>({
     photos: { face: null, full: null, passport: null },
-    officeName: '',
-    hasExperience: false,
+    currentDate: new Date().toISOString().split('T')[0],
     religion: 'MUSLIM',
     maritalStatus: 'SINGLE',
     placeOfIssue: 'ADDIS ABABA',
-    currentDate: new Date().toISOString().split('T')[0],
+    hasExperience: false,
     langEnglishPoor: false,
     langEnglishFair: false,
     langEnglishFluent: true,
@@ -43,7 +42,7 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     langAmharic: 'FLUENT',
     langOromifa: 'FLUENT',
     contactRelation: 'FATHER'
-  }));
+  });
 
   // Auto Calculations & Intelligent Defaults
   useEffect(() => {
@@ -105,6 +104,78 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     });
   };
 
+  const handlePhotoUpdate = async (type: 'face' | 'full' | 'passport', f: File | string) => {
+    if (typeof f === 'string') {
+      handleInputChange('photos', { ...formData.photos, [type]: f });
+      return;
+    }
+
+    const r = new FileReader();
+    r.onload = (e) => handleInputChange('photos', { ...formData.photos, [type]: e.target?.result });
+    r.readAsDataURL(f);
+
+    if (type === 'passport') {
+      setIsScanning(true);
+      try {
+        const data: MRZData = await processPassportImage(f);
+        
+        // TRICK: Extract Father/Grandfather name from Full Name (remove first name)
+        const nameParts = data.fullName.split(' ');
+        const extractedContactName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : data.fullName;
+
+        const calculatedIssue = data.issueDate || calculateEthiopianIssueDate(data.expiryDate);
+
+        setFormData(prev => ({ 
+          ...prev, 
+          fullName: data.fullName, 
+          passportNumber: data.passportNumber, 
+          dob: data.dob, 
+          expiryDate: data.expiryDate, 
+          issueDate: calculatedIssue || prev.issueDate || '',
+          placeOfIssue: 'ADDIS ABABA', 
+          pob: data.pob,
+          contactName: extractedContactName,
+          contactAddress: data.pob,
+          contactRelation: 'FATHER'
+        }));
+      } catch (e: any) { 
+        alert("Passport Scan Failed: " + (e?.message || e)); 
+      } finally { 
+        setIsScanning(false); 
+      }
+    }
+  };
+
+  const handleOverrideChange = (templateId: string, key: 'refNo' | 'monthlySalary', value: string) => {
+    setOfficeOverrides(prev => ({
+      ...prev,
+      [templateId]: {
+        ...(prev[templateId] || { refNo: '', monthlySalary: '' }),
+        [key]: value.toUpperCase()
+      }
+    }));
+  };
+
+  const incrementAllRefs = () => {
+    setOfficeOverrides(prev => {
+      const next = { ...prev };
+      templates.forEach(t => {
+        const current = next[t.id]?.refNo || '';
+        const match = current.match(/^(.*?)(\d+)$/);
+        if (match) {
+          const prefix = match[1];
+          const num = parseInt(match[2]);
+          const nextNum = (num + 1).toString().padStart(match[2].length, '0');
+          next[t.id] = {
+            ...(next[t.id] || { refNo: '', monthlySalary: '' }),
+            refNo: prefix + nextNum
+          };
+        }
+      });
+      return next;
+    });
+  };
+
   const handleLanguageSelect = (language: 'English' | 'Arabic' | 'Amharic' | 'Oromifa', level: 'Poor' | 'Fair' | 'Fluent') => {
     const prefix = `lang${language}`;
     const isLevelActive = level === 'Fluent' || level === 'Fair';
@@ -119,63 +190,13 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     }));
   };
 
-  const handlePhotoUpload = async (type: 'face' | 'full' | 'passport', file: File | string) => {
-    if (typeof file === 'string') {
-      setFormData(prev => ({ ...prev, photos: { ...prev.photos, [type]: file } }));
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => setFormData(prev => ({ ...prev, photos: { ...prev.photos, [type]: e.target?.result as string } }));
-    reader.readAsDataURL(file);
-
-    if (type === 'passport') {
-      setIsScanning(true);
-      try {
-        const data: MRZData = await processPassportImage(file);
-        
-        // TRICK: Extract Father/Grandfather name from Full Name (remove first name)
-        const nameParts = data.fullName.split(' ');
-        const extractedContactName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : data.fullName;
-
-        const calculatedIssue = data.issueDate || calculateEthiopianIssueDate(data.expiryDate);
-
-        setFormData(prev => ({
-          ...prev,
-          fullName: data.fullName,
-          passportNumber: data.passportNumber,
-          dob: data.dob,
-          expiryDate: data.expiryDate,
-          issueDate: calculatedIssue || prev.issueDate || '',
-          placeOfIssue: 'ADDIS ABABA',
-          pob: data.pob,
-          contactName: extractedContactName,
-          contactAddress: data.pob,
-          contactRelation: 'FATHER'
-        }));
-      } catch (e: any) {
-        alert("Scan Failed: " + (e?.message || e));
-      } finally {
-        setIsScanning(false);
-      }
-    }
-  };
-
-  const hasField = (key: string) => countryTemplates.some(t => t.fields.some(f => f.key === key));
-  const hasAnyField = (keys: string[]) => keys.some(key => hasField(key));
+  const hasFieldAcrossTemplates = (key: string) => templates.some(t => t.fields.some(f => f.key === key));
+  const hasAnyField = (keys: string[]) => keys.some(key => hasFieldAcrossTemplates(key));
 
   const hasEnglish = hasAnyField(['langEnglishPoor', 'langEnglishFair', 'langEnglishFluent', 'langEnglish']);
   const hasArabic = hasAnyField(['langArabicPoor', 'langArabicFair', 'langArabicFluent', 'langArabic']);
   const hasAmharic = hasAnyField(['langAmharicPoor', 'langAmharicFair', 'langAmharicFluent', 'langAmharic', 'amharic']);
   const hasOromifa = hasAnyField(['langOromifaPoor', 'langOromifaFair', 'langOromifaFluent', 'langOromifa', 'oromifa']);
-
-  const getCustomLabel = (key: string) => {
-    for (const t of countryTemplates) {
-      const f = t.fields.find(field => field.key === key);
-      if (f?.customLabel) return f.customLabel;
-    }
-    return null;
-  };
 
   const handledKeys = [
     'currentDate', 'positionApplied', 'refNo', 'monthlySalary', 'photoFace', 'photoFull', 'photoPassport',
@@ -187,14 +208,15 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
     'langAmharicPoor', 'langAmharicFair', 'langAmharicFluent',
     'langOromifaPoor', 'langOromifaFair', 'langOromifaFluent',
     'amharic', 'oromifa',
-    'hasExperience', 'skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing', 'officeName'
+    'hasExperience', 'skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing'
   ];
+  
   for(let i=1; i<=4; i++) {
     handledKeys.push(`expCountry${i}`, `expPeriod${i}`, `expPosition${i}`);
   }
 
   const supplementalFields = useMemo(() => {
-    const allTemplateFields = countryTemplates.flatMap(t => t.fields);
+    const allTemplateFields = templates.flatMap(t => t.fields);
     const uniqueFieldsMap = new Map<string, TemplateField>();
     allTemplateFields.forEach(f => {
       if (!handledKeys.includes(f.key)) {
@@ -209,11 +231,11 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
       }
     });
     return Array.from(uniqueFieldsMap.values());
-  }, [countryTemplates]);
+  }, [templates]);
 
   const requiredExpRecords = useMemo(() => {
     let max = 0;
-    countryTemplates.forEach(t => {
+    templates.forEach(t => {
       t.fields.forEach(f => {
         const match = f.key.match(/^expCountry(\d)$/);
         if (match) {
@@ -223,74 +245,179 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
       });
     });
     return max;
-  }, [countryTemplates]);
+  }, [templates]);
 
-  const progress = useMemo(() => {
-    const coreKeys = ['fullName', 'passportNumber', 'dob', 'pob'];
-    const filledCore = coreKeys.filter(k => !!formData[k]).length;
-    const filledPhotos = Object.values(formData.photos).filter(p => !!p).length;
-    return Math.round(((filledCore + filledPhotos) / (coreKeys.length + 3)) * 100);
-  }, [formData]);
+  const generateAll = async () => {
+    if (templates.length === 0) return;
+    setIsGenerating(true);
+    try {
+      for (const template of templates) {
+        const specificData = {
+          ...formData,
+          refNo: officeOverrides[template.id]?.refNo || formData.refNo || '',
+          monthlySalary: officeOverrides[template.id]?.monthlySalary || formData.monthlySalary || ''
+        };
+        await generateTemplatePDF(specificData, template, user?.agencyName);
+        await new Promise(r => setTimeout(r, 600));
+      }
+      trackGeneration(templates.length);
+    } catch (e) {
+      console.error("Batch generation failed:", e);
+      alert("Batch export failed.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 pb-32 animate-fade-in relative bg-primary">
+    <div className="max-w-6xl mx-auto px-4 pb-32 animate-fade-in relative bg-primary">
       <BackButton onClick={onBack} />
-      <Header title={`${country.toUpperCase()} Generator`} subtitle="Engineered Recruitment Solution" flag={flag} />
+      <Header title="Mass Generate" subtitle="Automated Batch Recruitment Pipeline" flag="⚡" />
 
-      {countryTemplates.length === 0 ? (
+      {templates.length === 0 ? (
         <div className="bg-black/80 p-20 rounded-[48px] border-2 border-dashed border-white/10 text-center backdrop-blur-md">
             <Sparkles size={64} className="mx-auto mb-6 text-slate-800" />
-            <h3 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">No Layouts Detected</h3>
-            <p className="text-slate-500 mb-12 max-w-xs mx-auto text-sm">Please build and deploy a template in the Studio to activate this country.</p>
-            <button onClick={() => (window as any).onNavigate('settings')} className="px-10 py-4 bg-pixel text-white font-black rounded-2xl hover:bg-pixelDark transition-all shadow-pixel">
-              Open Studio Console
-            </button>
+            <h3 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">No Active Layouts</h3>
+            <p className="text-slate-500 mb-12 max-w-xs mx-auto text-sm">Design templates in Studio to enable batch export.</p>
+            <button onClick={() => (window as any).onNavigate('settings')} className="px-10 py-4 bg-pixel text-white font-black rounded-2xl hover:bg-pixelDark transition-all shadow-pixel uppercase text-xs tracking-widest">Open Builder Console</button>
         </div>
       ) : (
         <div className="space-y-12">
           
+          <FormSection title="Core Batch Data" icon={<ListChecks size={14} />} accentColor="pixel">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {hasFieldAcrossTemplates('currentDate') && (
+                  <FormInput 
+                    label="Generation Date" 
+                    type="date" 
+                    value={formData.currentDate || ''} 
+                    onChange={e => handleInputChange('currentDate', e.target.value)} 
+                  />
+                )}
+                {hasFieldAcrossTemplates('positionApplied') && (
+                  <FormInput 
+                    label="Position Applied For" 
+                    value={formData.positionApplied || ''} 
+                    onChange={e => handleInputChange('positionApplied', e.target.value)} 
+                    placeholder="HOUSEMAID"
+                  />
+                )}
+             </div>
+          </FormSection>
+
+          <div className="bg-black/60 backdrop-blur-xl p-8 rounded-[40px] border border-white/5 shadow-2xl animate-fade-in">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3 text-[11px] font-black tracking-[0.2em] text-slate-500 uppercase">
+                <Building size={14} />
+                <span>Office Overrides (Horizontal Placement)</span>
+              </div>
+              <button 
+                onClick={incrementAllRefs}
+                className="flex items-center gap-2 px-6 py-2.5 bg-pixel text-white hover:bg-pixelDark rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-pixel"
+              >
+                <Plus size={14}/> +1 All Refs
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {templates.map(t => {
+                const needsRef = t.fields.some(f => f.key === 'refNo');
+                const needsSalary = t.fields.some(f => f.key === 'monthlySalary');
+                if (!needsRef && !needsSalary) return null;
+
+                return (
+                  <div key={t.id} className="bg-secondary/40 p-4 rounded-3xl border border-surfaceElevated group hover:border-pixel/30 transition-all flex flex-col">
+                    <div className="text-[9px] font-black text-pixel uppercase tracking-[0.2em] mb-4 flex items-center gap-2 truncate">
+                      <div className="w-1.5 h-1.5 rounded-full bg-pixel"></div>
+                      {t.name}
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      {needsRef && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter w-12">Ref No</span>
+                          <input 
+                            value={officeOverrides[t.id]?.refNo || ''}
+                            onChange={e => handleOverrideChange(t.id, 'refNo', e.target.value)}
+                            className="flex-1 bg-primary/40 border border-surfaceElevated rounded-xl p-2 text-[11px] text-white outline-none focus:border-pixel transition-all placeholder:text-slate-800"
+                            placeholder="TK-..."
+                          />
+                        </div>
+                      )}
+                      {needsSalary && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter w-12">Salary</span>
+                          <input 
+                            value={officeOverrides[t.id]?.monthlySalary || ''}
+                            onChange={e => handleOverrideChange(t.id, 'monthlySalary', e.target.value)}
+                            className="flex-1 bg-primary/40 border border-surfaceElevated rounded-xl p-2 text-[11px] text-white outline-none focus:border-pixel transition-all placeholder:text-slate-800"
+                            placeholder="1200 SR"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {hasAnyField(['photoFace', 'photoFull', 'photoPassport']) && (
-            <FormSection title="Media Assets" icon={<ImageIcon size={14}/>} accentColor="pixel">
+            <FormSection title="Shared Assets" icon={<ImageIcon size={14} />} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                  {hasField('photoFace') && <PhotoUpload label="FACE PHOTO" type="face" preview={formData.photos.face} onUpload={f => handlePhotoUpload('face', f)} onRemove={() => handleInputChange('photos', {...formData.photos, face: null})} colorClass="pixel" />}
-                  {hasField('photoFull') && <PhotoUpload label="FULL BODY" type="full" preview={formData.photos.full} onUpload={f => handlePhotoUpload('full', f)} onRemove={() => handleInputChange('photos', {...formData.photos, full: null})} colorClass="pixel" />}
-                  {hasField('photoPassport') && <PhotoUpload label="PASSPORT SCAN" type="pass" preview={formData.photos.passport} onUpload={f => handlePhotoUpload('passport', f)} onRemove={() => handleInputChange('photos', {...formData.photos, passport: null})} colorClass="pixel" isScanning={isScanning} />}
+                  {hasFieldAcrossTemplates('photoFace') && <PhotoUpload label="FACE PHOTO" type="face" preview={formData.photos.face} onUpload={c => handlePhotoUpdate('face', c)} onRemove={() => handleInputChange('photos', {...formData.photos, face: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoFull') && <PhotoUpload label="FULL BODY" type="full" preview={formData.photos.full} onUpload={c => handlePhotoUpdate('full', c)} onRemove={() => handleInputChange('photos', {...formData.photos, full: null})} colorClass="pixel" />}
+                  {hasFieldAcrossTemplates('photoPassport') && <PhotoUpload label="PASSPORT PHOTO" type="pass" preview={formData.photos.passport} onUpload={c => handlePhotoUpdate('passport', c)} onRemove={() => handleInputChange('photos', {...formData.photos, passport: null})} colorClass="pixel" isScanning={isScanning} />}
               </div>
             </FormSection>
           )}
 
-          <FormSection title="Recruitment Parameters" icon={<Briefcase size={14}/>} accentColor="pixel">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {hasField('officeName') && <FormInput label="Agency/Office Identity" value={formData.officeName || ''} onChange={e => handleInputChange('officeName', e.target.value)} placeholder="e.g. STAR AGENCY" />}
-                {hasField('refNo') && <FormInput label="Ref No" value={formData.refNo || ''} onChange={e => handleInputChange('refNo', e.target.value)} placeholder="TK-101" />}
-                {hasField('positionApplied') && <FormInput label="Position Applied For" value={formData.positionApplied || ''} onChange={e => handleInputChange('positionApplied', e.target.value)} placeholder="HOUSEMAID" />}
-                {hasField('monthlySalary') && <FormInput label="Monthly Salary" value={formData.monthlySalary || ''} onChange={e => handleInputChange('monthlySalary', e.target.value)} placeholder="1200 SR" />}
-                {hasField('currentDate') && <FormInput label="Generation Date" type="date" value={formData.currentDate || ''} onChange={e => handleInputChange('currentDate', e.target.value)} />}
-            </div>
-          </FormSection>
-
-          <FormSection title="Personal Profile" icon={<User size={14}/>} accentColor="pixel">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {hasField('fullName') && <FormInput label="Full Name" value={formData.fullName || ''} onChange={e => handleInputChange('fullName', e.target.value)} />}
-                {hasField('religion') && <FormSelect label="Religion" value={formData.religion} onChange={e => handleInputChange('religion', e.target.value)} options={[{value:'MUSLIM',label:'MUSLIM'},{value:'CHRISTIAN',label:'CHRISTIAN'},{value:'OTHER',label:'OTHER'}]} />}
-                {hasField('dob') && <FormInput label="Date of Birth" type="date" value={formData.dob || ''} onChange={e => handleInputChange('dob', e.target.value)} />}
-                {hasField('age') && <FormInput label="Age" value={formData.age || ''} readOnly className="opacity-60 bg-black/20" />}
-                {hasField('pob') && <FormInput label="Place of Birth" value={formData.pob || ''} onChange={e => handleInputChange('pob', e.target.value)} placeholder="ADDIS ABABA" />}
-                {hasField('maritalStatus') && <FormSelect label="Marital Status" value={formData.maritalStatus} onChange={e => handleInputChange('maritalStatus', e.target.value)} options={[{value:'SINGLE',label:'SINGLE'},{value:'MARRIED',label:'MARRIED'},{value:'DIVORCED',label:'DIVORCED'},{value:'WIDOWED',label:'WIDOWED'}]} />}
-                {hasField('children') && <FormInput label="No. of Children" type="number" value={formData.children || ''} onChange={e => handleInputChange('children', e.target.value)} />}
-                {hasField('education') && <FormInput label="Educational Background" value={formData.education || ''} onChange={e => handleInputChange('education', e.target.value)} />}
-                {hasField('height') && <FormInput label="Height" value={formData.height || ''} onChange={e => handleInputChange('height', e.target.value)} placeholder="1.65 M" />}
-                {hasField('weight') && <FormInput label="Weight" value={formData.weight || ''} onChange={e => handleInputChange('weight', e.target.value)} placeholder="58 KG" />}
-            </div>
-          </FormSection>
+          {hasAnyField(['fullName', 'religion', 'dob', 'pob', 'maritalStatus', 'education', 'height', 'weight', 'children', 'age']) && (
+            <FormSection title="Candidate Core Data" icon={<User size={14}/>} accentColor="pixel">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {hasFieldAcrossTemplates('fullName') && <FormInput label="Full Name" value={formData.fullName || ''} onChange={e => handleInputChange('fullName', e.target.value)} />}
+                  {hasFieldAcrossTemplates('religion') && (
+                    <FormSelect 
+                      label="Religion" 
+                      value={formData.religion || ''} 
+                      onChange={e => handleInputChange('religion', e.target.value)} 
+                      options={[
+                        { value: 'MUSLIM', label: 'MUSLIM' },
+                        { value: 'CHRISTIAN', label: 'CHRISTIAN' },
+                        { value: 'OTHER', label: 'OTHER' }
+                      ]} 
+                    />
+                  )}
+                  {hasFieldAcrossTemplates('dob') && <FormInput label="Date of Birth" type="date" value={formData.dob || ''} onChange={e => handleInputChange('dob', e.target.value)} />}
+                  {hasFieldAcrossTemplates('pob') && <FormInput label="Place of Birth" value={formData.pob || ''} onChange={e => handleInputChange('pob', e.target.value)} placeholder="ADDIS ABABA" />}
+                  {hasFieldAcrossTemplates('maritalStatus') && (
+                    <FormSelect 
+                      label="Marital Status" 
+                      value={formData.maritalStatus || ''} 
+                      onChange={e => handleInputChange('maritalStatus', e.target.value)} 
+                      options={[
+                        { value: 'SINGLE', label: 'SINGLE' },
+                        { value: 'MARRIED', label: 'MARRIED' },
+                        { value: 'DIVORCED', label: 'DIVORCED' },
+                        { value: 'WIDOWED', label: 'WIDOWED' }
+                      ]} 
+                    />
+                  )}
+                  {hasFieldAcrossTemplates('children') && <FormInput label="No. of Children" value={formData.children || ''} onChange={e => handleInputChange('children', e.target.value)} placeholder="0" />}
+                  {hasFieldAcrossTemplates('education') && <FormInput label="Education" value={formData.education || ''} onChange={e => handleInputChange('education', e.target.value)} />}
+                  {hasFieldAcrossTemplates('height') && <FormInput label="Height" value={formData.height || ''} onChange={e => handleInputChange('height', e.target.value)} placeholder="1.65 M" />}
+                  {hasFieldAcrossTemplates('weight') && <FormInput label="Weight" value={formData.weight || ''} onChange={e => handleInputChange('weight', e.target.value)} placeholder="58 KG" />}
+                  {hasFieldAcrossTemplates('age') && <FormInput label="Age" value={formData.age || ''} onChange={e => handleInputChange('age', e.target.value)} placeholder="24" />}
+              </div>
+            </FormSection>
+          )}
 
           {hasAnyField(['passportNumber', 'issueDate', 'expiryDate', 'placeOfIssue']) && (
-            <FormSection title="Travel Credentials" icon={<Contact size={14}/>} accentColor="pixel">
+            <FormSection title="Passport Details" icon={<Contact size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {hasField('passportNumber') && <FormInput label="Passport Number" value={formData.passportNumber || ''} onChange={e => handleInputChange('passportNumber', e.target.value)} />}
-                {hasField('issueDate') && <FormInput label="Issue Date" type="date" value={formData.issueDate || ''} onChange={e => handleInputChange('issueDate', e.target.value)} />}
-                {hasField('expiryDate') && <FormInput label="Expiry Date" type="date" value={formData.expiryDate || ''} onChange={e => handleInputChange('expiryDate', e.target.value)} />}
-                {hasField('placeOfIssue') && <FormInput label="Place of Issue" value={formData.placeOfIssue || 'ADDIS ABABA'} onChange={e => handleInputChange('placeOfIssue', e.target.value)} placeholder="ADDIS ABABA" />}
+                {hasFieldAcrossTemplates('passportNumber') && <FormInput label="Passport Number" value={formData.passportNumber || ''} onChange={e => handleInputChange('passportNumber', e.target.value)} />}
+                {hasFieldAcrossTemplates('issueDate') && <FormInput label="Issue Date" type="date" value={formData.issueDate || ''} onChange={e => handleInputChange('issueDate', e.target.value)} />}
+                {hasFieldAcrossTemplates('expiryDate') && <FormInput label="Expiry Date" type="date" value={formData.expiryDate || ''} onChange={e => handleInputChange('expiryDate', e.target.value)} />}
+                {hasFieldAcrossTemplates('placeOfIssue') && <FormInput label="Place of Issue" value={formData.placeOfIssue || 'ADDIS ABABA'} onChange={e => handleInputChange('placeOfIssue', e.target.value)} placeholder="ADDIS ABABA" />}
               </div>
             </FormSection>
           )}
@@ -298,46 +425,74 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
           {hasAnyField(['contactName', 'contactAddress', 'contactRelation', 'contactPhone']) && (
             <FormSection title="Emergency Contact" icon={<Contact size={14}/>} accentColor="pixel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {hasField('contactName') && <FormInput label="Contact Name" value={formData.contactName || ''} onChange={e => handleInputChange('contactName', e.target.value)} />}
-                {hasField('contactAddress') && <FormInput label="Address" value={formData.contactAddress || ''} onChange={e => handleInputChange('contactAddress', e.target.value)} />}
-                {hasField('contactRelation') && <FormInput label="Relationship" value={formData.contactRelation || ''} onChange={e => handleInputChange('contactRelation', e.target.value)} />}
-                {hasField('contactPhone') && <FormInput label="Contact Phone" value={formData.contactPhone || ''} onChange={e => handleInputChange('contactPhone', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactName') && <FormInput label="Contact Name" value={formData.contactName || ''} onChange={e => handleInputChange('contactName', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactAddress') && <FormInput label="Address" value={formData.contactAddress || ''} onChange={e => handleInputChange('contactAddress', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactRelation') && <FormInput label="Relationship" value={formData.contactRelation || ''} onChange={e => handleInputChange('contactRelation', e.target.value)} />}
+                {hasFieldAcrossTemplates('contactPhone') && <FormInput label="Contact Phone" value={formData.contactPhone || ''} onChange={e => handleInputChange('contactPhone', e.target.value)} />}
               </div>
             </FormSection>
           )}
 
           <FormSection title="Language Proficiency" icon={<Languages size={14}/>} accentColor="pixel">
-            <div className="space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
-                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">English</div>
-                <div className="flex gap-6">
-                  {['Poor', 'Fair', 'Fluent'].map(level => (
-                    <FormRadio key={`eng-${level}`} label={level} checked={!!formData[`langEnglish${level}`]} onChange={() => handleLanguageSelect('English', level as any)} />
-                  ))}
-                </div>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {hasFieldAcrossTemplates('langEnglish') && <FormInput label="English Level (Text)" value={formData.langEnglish || ''} onChange={e => handleInputChange('langEnglish', e.target.value)} />}
+                {hasFieldAcrossTemplates('langArabic') && <FormInput label="Arabic Level (Text)" value={formData.langArabic || ''} onChange={e => handleInputChange('langArabic', e.target.value)} />}
+                {hasFieldAcrossTemplates('langAmharic') && <FormInput label="Amharic Level (Text)" value={formData.langAmharic || ''} onChange={e => handleInputChange('langAmharic', e.target.value)} />}
+                {hasFieldAcrossTemplates('langOromifa') && <FormInput label="Oromifa Level (Text)" value={formData.langOromifa || ''} onChange={e => handleInputChange('langOromifa', e.target.value)} />}
               </div>
-              <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
-                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Arabic</div>
-                <div className="flex gap-6">
-                  {['Poor', 'Fair', 'Fluent'].map(level => (
-                    <FormRadio key={`ara-${level}`} label={level} checked={!!formData[`langArabic${level}`]} onChange={() => handleLanguageSelect('Arabic', level as any)} />
-                  ))}
+              <div className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
+                  <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">English</div>
+                  <div className="flex gap-6">
+                    {['Poor', 'Fair', 'Fluent'].map(level => (
+                      <FormRadio 
+                        key={`eng-${level}`}
+                        label={level}
+                        checked={!!formData[`langEnglish${level}`]} 
+                        onChange={() => handleLanguageSelect('English', level as any)} 
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
-                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Amharic</div>
-                <div className="flex gap-6">
-                  {['Poor', 'Fair', 'Fluent'].map(level => (
-                    <FormRadio key={`amh-${level}`} label={level} checked={!!formData[`langAmharic${level}`]} onChange={() => handleLanguageSelect('Amharic', level as any)} />
-                  ))}
+                <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
+                  <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Arabic</div>
+                  <div className="flex gap-6">
+                    {['Poor', 'Fair', 'Fluent'].map(level => (
+                      <FormRadio 
+                        key={`ara-${level}`}
+                        label={level}
+                        checked={!!formData[`langArabic${level}`]} 
+                        onChange={() => handleLanguageSelect('Arabic', level as any)} 
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="flex flex-col md:flex-row md:items-center gap-4">
-                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Oromifa</div>
-                <div className="flex gap-6">
-                  {['Poor', 'Fair', 'Fluent'].map(level => (
-                    <FormRadio key={`oro-${level}`} label={level} checked={!!formData[`langOromifa${level}`]} onChange={() => handleLanguageSelect('Oromifa', level as any)} />
-                  ))}
+                <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
+                  <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Amharic</div>
+                  <div className="flex gap-6">
+                    {['Poor', 'Fair', 'Fluent'].map(level => (
+                      <FormRadio 
+                        key={`amh-${level}`}
+                        label={level}
+                        checked={!!formData[`langAmharic${level}`]} 
+                        onChange={() => handleLanguageSelect('Amharic', level as any)} 
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col md:flex-row md:items-center gap-4">
+                  <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Oromifa</div>
+                  <div className="flex gap-6">
+                    {['Poor', 'Fair', 'Fluent'].map(level => (
+                      <FormRadio 
+                        key={`oro-${level}`}
+                        label={level}
+                        checked={!!formData[`langOromifa${level}`]} 
+                        onChange={() => handleLanguageSelect('Oromifa', level as any)} 
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -371,19 +526,19 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
           {hasAnyField(['skillWashing', 'skillCooking', 'skillBabyCare', 'skillCleaning', 'skillIroning', 'skillSewing']) && (
             <FormSection title="Competency Profile" icon={<CheckCircle2 size={14}/>} accentColor="pixel">
                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {hasField('skillWashing') && <FormCheckbox id="skillWashing" label="Washing" checked={!!formData.skillWashing} onChange={e => handleInputChange('skillWashing', e.target.checked)} />}
-                  {hasField('skillCooking') && <FormCheckbox id="skillCooking" label="Cooking" checked={!!formData.skillCooking} onChange={e => handleInputChange('skillCooking', e.target.checked)} />}
-                  {hasField('skillBabyCare') && <FormCheckbox id="skillBabyCare" label="Baby Care" checked={!!formData.skillBabyCare} onChange={e => handleInputChange('skillBabyCare', e.target.checked)} />}
-                  {hasField('skillCleaning') && <FormCheckbox id="skillCleaning" label="Cleaning" checked={!!formData.skillCleaning} onChange={e => handleInputChange('skillCleaning', e.target.checked)} />}
-                  {hasField('skillIroning') && <FormCheckbox id="skillIroning" label="Ironing" checked={!!formData.skillIroning} onChange={e => handleInputChange('skillIroning', e.target.checked)} />}
-                  {hasField('skillSewing') && <FormCheckbox id="skillSewing" label="Sewing" checked={!!formData.skillSewing} onChange={e => handleInputChange('skillSewing', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillWashing') && <FormCheckbox id="skillWashing" label="Washing" checked={!!formData.skillWashing} onChange={e => handleInputChange('skillWashing', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillCooking') && <FormCheckbox id="skillCooking" label="Cooking" checked={!!formData.skillCooking} onChange={e => handleInputChange('skillCooking', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillBabyCare') && <FormCheckbox id="skillBabyCare" label="Baby Care" checked={!!formData.skillBabyCare} onChange={e => handleInputChange('skillBabyCare', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillCleaning') && <FormCheckbox id="skillCleaning" label="Cleaning" checked={!!formData.skillCleaning} onChange={e => handleInputChange('skillCleaning', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillIroning') && <FormCheckbox id="skillIroning" label="Ironing" checked={!!formData.skillIroning} onChange={e => handleInputChange('skillIroning', e.target.checked)} />}
+                  {hasFieldAcrossTemplates('skillSewing') && <FormCheckbox id="skillSewing" label="Sewing" checked={!!formData.skillSewing} onChange={e => handleInputChange('skillSewing', e.target.checked)} />}
                </div>
             </FormSection>
           )}
 
           {supplementalFields.length > 0 && (
-            <FormSection title="Additional Information" icon={<PlusCircle size={14}/>} accentColor="pixel">
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <FormSection title="Supplemental Information" icon={<FilePlus size={14}/>} accentColor="pixel">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {supplementalFields.map(f => {
                   const labelToDisplay = f.customLabel || f.label;
                   return f.type === 'checkmark' || f.type === 'boolean' ? (
@@ -400,33 +555,38 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
                       label={labelToDisplay} 
                       value={formData[f.key] || ''} 
                       onChange={e => handleInputChange(f.key, e.target.value)} 
-                      placeholder="..." 
                     />
                   );
                 })}
-               </div>
+              </div>
             </FormSection>
           )}
 
-          <div className="bg-black/80 p-12 rounded-[56px] border border-white/5 shadow-2xl mt-16 backdrop-blur-3xl relative overflow-hidden group">
-            <div className="text-center mb-10 relative z-10">
-                <h4 className="text-xs font-black text-pixel uppercase tracking-[0.4em] mb-3">Generation Engine</h4>
-                <p className="text-slate-500 text-sm max-w-xs mx-auto">Choose an office template to compile your final CV.</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 relative z-10">
-                {countryTemplates.map(t => (
-                  <button key={t.id} onClick={() => { generateTemplatePDF(formData, t, user?.agencyName); trackGeneration(1); }} className="p-8 bg-white/5 border border-white/10 rounded-[32px] flex items-center justify-between hover:bg-pixel hover:border-pixel transition-all group/btn shadow-xl">
-                    <div className="flex items-center gap-5">
-                       <div className="p-4 rounded-[20px] bg-black/40 text-pixel group-hover/btn:text-white transition-all"><FileText size={24}/></div>
-                       <div className="text-left"><div className="font-black text-white text-sm uppercase">{t.name}</div><div className="text-[10px] text-slate-500 uppercase font-black mt-1">{t.fields.length} Active Fields</div></div>
-                    </div>
-                    <ChevronRight size={24} className="text-slate-700 group-hover/btn:text-white transition-all" />
-                  </button>
-                ))}
-            </div>
+          <div className="bg-black/80 p-16 rounded-[56px] border border-white/5 shadow-2xl mt-16 backdrop-blur-3xl text-center group">
+            <h4 className="text-xs font-black text-pixel uppercase tracking-[0.4em] mb-8">Execute Batch</h4>
+            <button 
+              onClick={generateAll}
+              disabled={isGenerating}
+              className="px-20 py-6 bg-pixel rounded-[28px] font-black text-2xl text-white shadow-pixel hover:bg-pixelDark hover:scale-[1.03] transition-all flex items-center justify-center gap-6 mx-auto disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 size={32} className="animate-spin" />
+                  GENERATING {templates.length} PDFs...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={32} className="animate-pulse" />
+                  GENERATE {templates.length} CVs
+                  <ChevronRight size={32} />
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}
     </div>
   );
-}
+};
+
+export default AllForm;
