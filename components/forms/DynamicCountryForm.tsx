@@ -306,59 +306,42 @@ export default function DynamicCountryForm({ country, flag, onBack }: Props) {
             </FormSection>
           )}
 
-          {hasAnyField([
-            'langEnglishPoor', 'langEnglishFair', 'langEnglishFluent', 
-            'langArabicPoor', 'langArabicFair', 'langArabicFluent',
-            'langAmharicPoor', 'langAmharicFair', 'langAmharicFluent',
-            'langOromifaPoor', 'langOromifaFair', 'langOromifaFluent',
-            'langEnglish', 'langArabic', 'langAmharic', 'langOromifa',
-            'amharic', 'oromifa'
-          ]) && (
-            <FormSection title="Language Proficiency" icon={<Languages size={14}/>} accentColor="pixel">
-              <div className="space-y-4">
-                {(hasEnglish || (!hasEnglish && !hasArabic && !hasAmharic && !hasOromifa)) && (
-                  <div className={`flex flex-col md:flex-row md:items-center gap-4 ${(hasArabic || hasAmharic || hasOromifa) ? 'border-b border-surfaceElevated pb-4' : ''}`}>
-                    <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">English</div>
-                    <div className="flex gap-6">
-                      {['Poor', 'Fair', 'Fluent'].map(level => (
-                        <FormRadio key={`eng-${level}`} label={level} checked={!!formData[`langEnglish${level}`]} onChange={() => handleLanguageSelect('English', level as any)} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {(hasArabic || (!hasEnglish && !hasArabic && !hasAmharic && !hasOromifa)) && (
-                  <div className={`flex flex-col md:flex-row md:items-center gap-4 ${(hasAmharic || hasOromifa) ? 'border-b border-surfaceElevated pb-4' : ''}`}>
-                    <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Arabic</div>
-                    <div className="flex gap-6">
-                      {['Poor', 'Fair', 'Fluent'].map(level => (
-                        <FormRadio key={`ara-${level}`} label={level} checked={!!formData[`langArabic${level}`]} onChange={() => handleLanguageSelect('Arabic', level as any)} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {hasAmharic && (
-                  <div className={`flex flex-col md:flex-row md:items-center gap-4 ${hasOromifa ? 'border-b border-surfaceElevated pb-4' : ''}`}>
-                    <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Amharic</div>
-                    <div className="flex gap-6">
-                      {['Poor', 'Fair', 'Fluent'].map(level => (
-                        <FormRadio key={`amh-${level}`} label={level} checked={!!formData[`langAmharic${level}`]} onChange={() => handleLanguageSelect('Amharic', level as any)} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {hasOromifa && (
-                  <div className="flex flex-col md:flex-row md:items-center gap-4">
-                    <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Oromifa</div>
-                    <div className="flex gap-6">
-                      {['Poor', 'Fair', 'Fluent'].map(level => (
-                        <FormRadio key={`oro-${level}`} label={level} checked={!!formData[`langOromifa${level}`]} onChange={() => handleLanguageSelect('Oromifa', level as any)} />
-                      ))}
-                    </div>
-                  </div>
-                )}
+          <FormSection title="Language Proficiency" icon={<Languages size={14}/>} accentColor="pixel">
+            <div className="space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
+                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">English</div>
+                <div className="flex gap-6">
+                  {['Poor', 'Fair', 'Fluent'].map(level => (
+                    <FormRadio key={`eng-${level}`} label={level} checked={!!formData[`langEnglish${level}`]} onChange={() => handleLanguageSelect('English', level as any)} />
+                  ))}
+                </div>
               </div>
-            </FormSection>
-          )}
+              <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
+                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Arabic</div>
+                <div className="flex gap-6">
+                  {['Poor', 'Fair', 'Fluent'].map(level => (
+                    <FormRadio key={`ara-${level}`} label={level} checked={!!formData[`langArabic${level}`]} onChange={() => handleLanguageSelect('Arabic', level as any)} />
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col md:flex-row md:items-center gap-4 border-b border-surfaceElevated pb-4">
+                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Amharic</div>
+                <div className="flex gap-6">
+                  {['Poor', 'Fair', 'Fluent'].map(level => (
+                    <FormRadio key={`amh-${level}`} label={level} checked={!!formData[`langAmharic${level}`]} onChange={() => handleLanguageSelect('Amharic', level as any)} />
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col md:flex-row md:items-center gap-4">
+                <div className="w-32 font-black text-white text-[11px] uppercase tracking-widest">Oromifa</div>
+                <div className="flex gap-6">
+                  {['Poor', 'Fair', 'Fluent'].map(level => (
+                    <FormRadio key={`oro-${level}`} label={level} checked={!!formData[`langOromifa${level}`]} onChange={() => handleLanguageSelect('Oromifa', level as any)} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </FormSection>
 
           {requiredExpRecords > 0 && (
             <FormSection title="Previous Employment History" icon={<History size={14}/>} accentColor="pixel">
