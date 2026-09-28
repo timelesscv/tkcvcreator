@@ -122,6 +122,20 @@ export const generateTemplatePDF = async (data: any, template: CustomTemplate, a
       else if (field.key === 'photoFull') val = data.photos?.full;
       else if (field.key === 'photoPassport') val = data.photos?.passport;
       else if (field.key === 'placeOfIssue') val = data.placeOfIssue || 'ADDIS ABABA';
+      else if (field.key === 'amharic' && val === undefined) val = data.amharic ?? (data.langAmharicFluent || data.langAmharicFair);
+      else if (field.key === 'oromifa' && val === undefined) val = data.oromifa ?? (data.langOromifaFluent || data.langOromifaFair);
+      else if (field.key === 'langAmharic' && !val) {
+        val = data.langAmharicFluent ? 'FLUENT' : data.langAmharicFair ? 'FAIR' : data.langAmharicPoor ? 'POOR' : '';
+      }
+      else if (field.key === 'langOromifa' && !val) {
+        val = data.langOromifaFluent ? 'FLUENT' : data.langOromifaFair ? 'FAIR' : data.langOromifaPoor ? 'POOR' : '';
+      }
+      else if (field.key === 'langEnglish' && !val) {
+        val = data.langEnglishFluent ? 'FLUENT' : data.langEnglishFair ? 'FAIR' : data.langEnglishPoor ? 'POOR' : '';
+      }
+      else if (field.key === 'langArabic' && !val) {
+        val = data.langArabicFluent ? 'FLUENT' : data.langArabicFair ? 'FAIR' : data.langArabicPoor ? 'POOR' : '';
+      }
 
       const xl = (field.x / 100) * PAGE_WIDTH;
       const yt = (field.y / 100) * PAGE_HEIGHT;
