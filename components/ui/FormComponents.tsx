@@ -93,14 +93,8 @@ export const PhotoUpload: React.FC<{ label: string; type: 'face' | 'full' | 'pas
       onUpload(result);
     } catch (err: any) {
       const msg = err?.message || '';
-      if (msg.includes('No active Gemini API key') || msg.includes('API key')) {
-        setError("No Gemini API key found. Please add a key in Admin Settings.");
-      } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate limit')) {
-        setError("Gemini API rate limit reached. Please try again in 1 minute.");
-      } else {
-        setError(msg || "Failed to remove background. Please try again.");
-      }
-      setTimeout(() => setError(null), 6000);
+      setError(msg || "Could not whiten background. Please try again.");
+      setTimeout(() => setError(null), 5000);
     } finally {
       setIsRemovingBg(false);
     }
