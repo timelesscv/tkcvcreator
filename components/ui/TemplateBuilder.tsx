@@ -77,7 +77,19 @@ const FIELD_GROUPS = [
       { key: 'langEnglishFluent', label: 'English: Fluent', type: 'boolean', category: 'skills' },
       { key: 'langArabicPoor', label: 'Arabic: Poor', type: 'boolean', category: 'skills' },
       { key: 'langArabicFair', label: 'Arabic: Fair', type: 'boolean', category: 'skills' },
-      { key: 'langArabicFluent', label: 'Arabic: Fluent', type: 'boolean', category: 'skills' }
+      { key: 'langArabicFluent', label: 'Arabic: Fluent', type: 'boolean', category: 'skills' },
+      { key: 'langAmharicPoor', label: 'Amharic: Poor', type: 'boolean', category: 'skills' },
+      { key: 'langAmharicFair', label: 'Amharic: Fair', type: 'boolean', category: 'skills' },
+      { key: 'langAmharicFluent', label: 'Amharic: Fluent', type: 'boolean', category: 'skills' },
+      { key: 'langOromifaPoor', label: 'Oromifa: Poor', type: 'boolean', category: 'skills' },
+      { key: 'langOromifaFair', label: 'Oromifa: Fair', type: 'boolean', category: 'skills' },
+      { key: 'langOromifaFluent', label: 'Oromifa: Fluent', type: 'boolean', category: 'skills' },
+      { key: 'amharic', label: 'Amharic (Checkmark)', type: 'checkmark', category: 'skills' },
+      { key: 'oromifa', label: 'Oromifa (Checkmark)', type: 'checkmark', category: 'skills' },
+      { key: 'langEnglish', label: 'English Level (Text)', type: 'text', category: 'skills' },
+      { key: 'langArabic', label: 'Arabic Level (Text)', type: 'text', category: 'skills' },
+      { key: 'langAmharic', label: 'Amharic Level (Text)', type: 'text', category: 'skills' },
+      { key: 'langOromifa', label: 'Oromifa Level (Text)', type: 'text', category: 'skills' }
     ]
   },
   {
